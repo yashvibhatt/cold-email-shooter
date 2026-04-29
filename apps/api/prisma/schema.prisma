@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  microsoftId   String         @unique
+  email         String         @unique
+  displayName   String
+  accessToken   String         @db.Text
+  refreshToken  String         @db.Text
+  tokenExpiry   DateTime
+  msalCacheJson String?        @db.Text
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  emailJobs     EmailJob[]
+  uploadedFiles UploadedFile[]
+  attachments   Attachment[]
+
+  @@map("users")
+}
+
+model UploadedFile {
+  id           String     @id @default(cuid())
+  userId       String
+  originalName String
+  storedName   String
+  rowCount     Int
+  createdAt    DateTime   @default(now())
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailJobs    EmailJob[]
+
+  @@map("uploaded_files")
+}
+
+model EmailJob {
+  id                String       @id @default(cuid())
+  userId            String
+  recipientEmail    String
+  subject           String
+  body              String       @db.Text
+  scheduledDatetime DateTime
+  timezone          String       @default("UTC")
+  status            EmailStatus  @default(PENDING)
+  sourceFileId      String?
+  sentAt            DateTime?
+  failedReason      String?      @db.Text
+  idempotencyKey    String       @unique
+  retryCount        Int          @default(0)
+  attachmentIds     Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceFile UploadedFile? @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
+  sendLogs   EmailSendLog[]
+
+  @@index([userId, status])
+  @@index([scheduledDatetime])
+  @@index([status])
+  @@map("email_jobs")
+}
+
+model EmailSendLog {
+  id         String   @id @default(cuid())
+  emailJobId String
+  status     String
+  message    String   @db.Text
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  emailJob EmailJob @relation(fields: [emailJobId], references: [id], onDelete: Cascade)
+
+  @@index([emailJobId])
+  @@map("email_send_logs")
+}
+
+model Attachment {
+  id           String   @id @default(cuid())
+  userId       String
+  originalName String
+  storedName   String
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("attachments")
+}
+
+enum EmailStatus {
+  PENDING
+  SCHEDULED
+  SENT
+  FAILED
+  CANCELLED
+}

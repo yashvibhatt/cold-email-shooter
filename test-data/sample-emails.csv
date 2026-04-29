@@ -1,0 +1,43 @@
+recipient_email,subject,body,send_date,send_time,timezone
+alice@example.com,Hello Alice!,"Hi Alice,
+
+I wanted to reach out and introduce myself. I think there's a great opportunity for us to collaborate.
+
+Looking forward to connecting!
+
+Best regards",2026-05-01,09:00,America/New_York
+bob@example.com,Partnership Opportunity,"Dear Bob,
+
+I came across your work and I'm impressed by what you've built. I'd love to discuss a potential partnership.
+
+Would you be available for a 30-minute call this week?
+
+Best,",2026-05-01,10:30,America/Chicago
+carol@example.com,Quick Question,"Hi Carol,
+
+I have a quick question about your recent article on AI trends. Would you be willing to share your thoughts?
+
+Thanks!",2026-05-02,14:00,Europe/London
+david@example.com,Following Up,"Hi David,
+
+I'm following up on our conversation from last week. Have you had a chance to review the proposal?
+
+Let me know if you have any questions.
+
+Regards",2026-05-02,09:00,America/Los_Angeles
+invalid-email,Missing Fields,,2026-05-03,11:00,UTC
+eve@example.com,Investment Insights,"Dear Eve,
+
+I wanted to share some insights on the current market that I think you'd find valuable.
+
+Best regards",2026-05-03,15:30,Asia/Tokyo
+frank@example.com,Coffee Chat?,"Hey Frank,
+
+Any chance you'd be up for a virtual coffee chat next week? I'd love to learn more about your work.
+
+Cheers",2026-05-04,10:00,America/New_York
+grace@example.com,Collaboration Idea,"Hi Grace,
+
+I have an idea for a collaboration that could benefit both of our audiences. Would love to discuss.
+
+Warm regards",2026-05-05,16:00,Europe/Paris

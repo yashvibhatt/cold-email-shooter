@@ -1,6 +1,8 @@
 # Cold Email Shooter
 
-A production-grade Outlook email scheduler. Upload a CSV/Excel file, set dates and times, and the system sends emails through your Microsoft Outlook account via the Graph API — reliably, with deduplication, retries, and full status tracking.
+A production-grade cold email scheduler for **Outlook and Gmail**. Upload a CSV/Excel file, set dates and times, and the system sends emails through your own Microsoft or Google account via their official APIs — reliably, with deduplication, retries, and full status tracking. Also includes reply/bounce detection, threaded follow-up scheduling, and outreach-history checking.
+
+**⚠️ Every person who runs this app needs their own credentials.** See [Multi-user setup](#multi-user-setup--each-person-needs-their-own-credentials) below before sharing this repo with anyone else — do not hand out your `.env` file or your Azure/Google app credentials.
 
 ---
 
@@ -34,11 +36,28 @@ cold-email-shooter/
 
 - Node.js 20+
 - Docker + Docker Compose (for PostgreSQL and Redis)
-- A Microsoft Azure app registration (see below)
+- Your **own** Microsoft Azure app registration (see below) — required for Outlook
+- Your **own** Google Cloud OAuth app (see below) — optional, only if you want Gmail sending too
+
+---
+
+## Multi-user setup — each person needs their own credentials
+
+This app is designed to run **locally, one instance per person**. If you're sharing this repo with someone else (a friend, teammate, etc.), each person must:
+
+1. **Clone the repo fresh** — never copy someone else's `.env` file. It's gitignored on purpose and contains secrets tied to one specific Azure/Google app and one specific session.
+2. **Create their own Azure App Registration** (steps below) — do not reuse someone else's `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET`. The client secret is effectively a password for that app registration; sharing it gives someone else's app the ability to act as that registration.
+3. **Create their own Google Cloud OAuth app** (steps below) if they want Gmail support — same reasoning as above.
+4. **Generate their own `SESSION_SECRET`** — never reuse one from another `.env`.
+5. **Run their own Postgres + Redis** via `npm run infra:up` — each person's Docker containers are local to their machine, so there's no shared database and no risk of one person's OAuth tokens or scheduled campaigns showing up for another person. This happens automatically as long as everyone follows the setup steps below on their own machine — there's nothing extra to configure here.
+
+When you log into Outlook or Gmail inside the app, the access/refresh tokens returned by Microsoft/Google are stored **only in your own local Postgres database** — they never leave your machine and are never committed to git. As long as each person has their own Azure/Google app registration and runs their own local database, there is no way for one person's login to end up using another person's tokens.
 
 ---
 
 ## Azure App Registration
+
+Do this once per person using the app — **do not share your `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET` with anyone else.**
 
 1. Go to [https://portal.azure.com](https://portal.azure.com) → **Azure Active Directory** → **App registrations** → **New registration**
 2. Name: `Cold Email Shooter` (or anything)
@@ -51,8 +70,29 @@ cold-email-shooter/
 6. Go to **API permissions** → **Add a permission** → **Microsoft Graph** → **Delegated**:
    - `openid`, `profile`, `email`, `offline_access`
    - `Mail.Send`
+   - `Mail.ReadWrite` — needed for bounce/reply detection, threaded follow-up replies, and the outreach-history checker
    - `User.Read`
 7. Click **Grant admin consent**
+
+---
+
+## Google Cloud OAuth App (optional — for Gmail support)
+
+Only needed if you want the option to send/follow-up through Gmail as well as Outlook. Skip this section if you're only using Outlook.
+
+1. Go to [https://console.cloud.google.com](https://console.cloud.google.com) → create or select a project
+2. **APIs & Services → Library** → search **Gmail API** → **Enable**
+3. **APIs & Services → OAuth consent screen** (may show as "Google Auth Platform") → **Get started**:
+   - App name: `Cold Email Shooter` (or anything)
+   - Audience: *External* (unless you have a Google Workspace org)
+   - Add your own Google account under **Test users** — while the app is in Testing mode, only test users can authorize it
+4. **Data Access** tab → **Add or remove scopes** → add:
+   - `https://www.googleapis.com/auth/gmail.send`
+   - `https://www.googleapis.com/auth/gmail.readonly` — needed for threaded follow-up replies
+5. **APIs & Services → Credentials** → **Create Credentials → OAuth client ID**:
+   - Application type: *Web application*
+   - Authorized redirect URI: `http://localhost:3001/api/auth/google/callback`
+6. Copy the **Client ID** → `GOOGLE_CLIENT_ID` and **Client Secret** → `GOOGLE_CLIENT_SECRET`
 
 ---
 
@@ -67,15 +107,19 @@ npm install            # installs root + workspaces
 
 ### 2. Environment variables
 
-```bash
-# Root .env (used by the API)
-cp .env.example .env
+**Important:** the file the API actually reads is `apps/api/.env`, not the root `.env` — copy the example there.
 
-# Fill in:
+```bash
+cp .env.example apps/api/.env
+
+# Fill in (use YOUR OWN values from the Azure/Google steps above — never copy someone else's):
 #   MICROSOFT_CLIENT_ID
 #   MICROSOFT_CLIENT_SECRET
 #   MICROSOFT_TENANT_ID
 #   MICROSOFT_REDIRECT_URI=http://localhost:3001/api/auth/callback
+#   GOOGLE_CLIENT_ID          (optional, only if you want Gmail support)
+#   GOOGLE_CLIENT_SECRET      (optional)
+#   GOOGLE_REDIRECT_URI=http://localhost:3001/api/auth/google/callback
 #   SESSION_SECRET=<run: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
 #   DATABASE_URL=postgresql://ces_user:ces_pass@localhost:5432/cold_email_shooter
 #   REDIS_URL=redis://localhost:6379
@@ -139,6 +183,15 @@ See [test-data/sample-emails.csv](test-data/sample-emails.csv) for an example.
 
 ---
 
+## Features
+
+- **Campaign scheduling** — upload Apollo/LinkedIn/generic CSVs, personalize with `{{first_name}}`, `{{company}}`, `{{title}}`, `{{location}}`, schedule with per-recipient stagger, send via Outlook or Gmail
+- **Follow-up tracking** — scans your Inbox for replies and out-of-office notices, groups recipients into Not followed up / Awaiting response / Responded, supports scheduled or immediate threaded follow-up replies (single or bulk), with attachments
+- **Sent Log** — pick a date, see everything actually sent that day (reads real mailbox Sent Items, catches manually-sent emails too), with the same threaded follow-up tools
+- **Analytics** — bounce/NDR detection, split by "Mail Delivery Subsystem" vs. other failure sources
+- **Check Outreach** — upload a contact list, checks each recipient's Sent Items history to flag who's already been contacted
+- **Hard safety rule** — the app refuses to send a follow-up to anyone who has already replied, enforced at the worker level (not just the UI)
+
 ## API Endpoints
 
 ### Auth
@@ -147,25 +200,57 @@ See [test-data/sample-emails.csv](test-data/sample-emails.csv) for an example.
 | `GET` | `/api/auth/login` | Get Microsoft OAuth URL |
 | `GET` | `/api/auth/callback` | OAuth callback (redirect) |
 | `GET` | `/api/auth/me` | Get current user |
+| `GET` | `/api/auth/token-status` | Check Outlook token health |
 | `POST` | `/api/auth/logout` | Clear session |
+| `GET` | `/api/auth/google/login` | Get Google OAuth URL (Gmail) |
+| `GET` | `/api/auth/google/callback` | Google OAuth callback |
+| `GET` | `/api/auth/google/status` | Check Gmail connection status |
+| `POST` | `/api/auth/google/disconnect` | Disconnect Gmail |
 
-### Files
+### Files & Attachments
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/files/upload` | Upload CSV/Excel, returns parsed preview |
+| `POST` | `/api/files/upload` | Upload pre-formatted CSV/Excel, returns parsed preview |
+| `POST` | `/api/files/upload-contacts` | Upload Apollo/LinkedIn/generic contacts CSV |
 | `GET` | `/api/files` | List uploaded files |
+| `POST` | `/api/attachments/upload` | Upload files to attach to campaigns |
 
 ### Emails
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/emails` | List email jobs (filters: status, dateFrom, dateTo, page, limit) |
 | `GET` | `/api/emails/stats` | Dashboard statistics |
-| `POST` | `/api/emails/schedule` | Schedule a batch of email jobs |
+| `POST` | `/api/emails/schedule` | Schedule a batch of pre-formatted email jobs |
+| `POST` | `/api/emails/schedule-campaign` | Schedule a personalized campaign from a contacts list |
 | `GET` | `/api/emails/:id` | Get single email job with logs |
 | `PATCH` | `/api/emails/:id/cancel` | Cancel a scheduled email |
 | `POST` | `/api/emails/:id/retry` | Retry a failed email |
 | `DELETE` | `/api/emails/:id` | Delete a completed/failed/cancelled email |
 | `POST` | `/api/emails/test` | Send a test email immediately |
+
+### Follow-up
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/followup/scan` | Scan Inbox for replies/OOO, refresh the follow-up list |
+| `POST` | `/api/followup/sync-manual` | Check Sent Items for follow-ups sent manually (slow, on-demand) |
+| `GET` | `/api/followup` | List current follow-ups |
+| `PATCH` | `/api/followup/:id` | Mark a follow-up as done/not done |
+| `POST` | `/api/followup/:id/send` | Send (or schedule) a threaded follow-up reply |
+| `POST` | `/api/followup/bulk-send` | Send (or schedule) follow-ups to multiple recipients |
+| `DELETE` | `/api/followup/:id` | Remove from the follow-up list |
+
+### Sent Log
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/sent-log` | Scan Sent Items for a date range, optionally excluding repliers |
+| `POST` | `/api/sent-log/send` | Send a threaded follow-up to one Sent Log entry |
+| `POST` | `/api/sent-log/bulk-send` | Bulk threaded follow-up from Sent Log entries |
+
+### Analytics & Outreach
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/analytics/bounces` | Bounce/NDR report for a date range |
+| `POST` | `/api/outreach/check` | Check a contact list against Sent Items history |
 
 ---
 

@@ -1,17 +1,21 @@
 'use client';
 
 import { useState } from 'react';
-import { Mail, LogOut, Shield, Upload, List, FlaskConical, Users, AlertTriangle } from 'lucide-react';
+import { Mail, LogOut, Shield, Upload, List, FlaskConical, Users, AlertTriangle, Search, TrendingDown, Plug, PlugZap, Clock, CalendarSearch } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth, useLogin, useLogout } from '@/hooks/useAuth';
+import { useAuth, useLogin, useLogout, useGoogleStatus, useConnectGoogle, useDisconnectGoogle } from '@/hooks/useAuth';
 import { StatsCards } from './StatsCards';
 import { FileUpload } from './FileUpload';
 import { EmailTable } from './EmailTable';
 import { TestEmailModal } from './TestEmailModal';
 import { CampaignUpload } from './CampaignUpload';
+import { OutreachCheck } from './OutreachCheck';
+import { Analytics } from './Analytics';
+import { FollowUp } from './FollowUp';
+import { SentLog } from './SentLog';
 import { Button } from './ui/Button';
 
-type Tab = 'campaign' | 'upload' | 'emails';
+type Tab = 'campaign' | 'upload' | 'emails' | 'outreach' | 'analytics' | 'followup' | 'sentlog';
 
 function useTokenStatus() {
   return useQuery({
@@ -30,8 +34,11 @@ function useTokenStatus() {
 export default function Dashboard() {
   const { data: user } = useAuth();
   const { data: tokenStatus } = useTokenStatus();
+  const { data: googleStatus } = useGoogleStatus();
   const logout = useLogout();
   const login = useLogin();
+  const connectGoogle = useConnectGoogle();
+  const disconnectGoogle = useDisconnectGoogle();
   const [tab, setTab] = useState<Tab>('campaign');
   const [showTest, setShowTest] = useState(false);
 
@@ -56,6 +63,35 @@ export default function Dashboard() {
                 <Shield className="w-3.5 h-3.5" />
                 SAFE_MODE
               </div>
+            )}
+
+            {googleStatus?.configured && (
+              googleStatus.connected ? (
+                <div
+                  className="hidden sm:flex items-center gap-1.5 text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-full"
+                  title={googleStatus.email ?? undefined}
+                >
+                  <PlugZap className="w-3.5 h-3.5" />
+                  Gmail connected
+                  <button
+                    onClick={() => disconnectGoogle.mutate()}
+                    className="ml-1 opacity-60 hover:opacity-100"
+                    title="Disconnect Gmail"
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => connectGoogle.mutate()}
+                  loading={connectGoogle.isPending}
+                >
+                  <Plug className="w-3.5 h-3.5" />
+                  Connect Gmail
+                </Button>
+              )
             )}
 
             <Button variant="secondary" size="sm" onClick={() => setShowTest(true)}>
@@ -150,11 +186,59 @@ export default function Dashboard() {
               <List className="w-4 h-4" />
               Email Jobs
             </button>
+            <button
+              onClick={() => setTab('outreach')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                tab === 'outreach'
+                  ? 'bg-surface-3 text-slate-200 border border-border-2 shadow-sm'
+                  : 'text-muted hover:text-slate-300'
+              }`}
+            >
+              <Search className="w-4 h-4" />
+              Check Outreach
+            </button>
+            <button
+              onClick={() => setTab('analytics')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                tab === 'analytics'
+                  ? 'bg-surface-3 text-slate-200 border border-border-2 shadow-sm'
+                  : 'text-muted hover:text-slate-300'
+              }`}
+            >
+              <TrendingDown className="w-4 h-4" />
+              Analytics
+            </button>
+            <button
+              onClick={() => setTab('followup')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                tab === 'followup'
+                  ? 'bg-surface-3 text-slate-200 border border-border-2 shadow-sm'
+                  : 'text-muted hover:text-slate-300'
+              }`}
+            >
+              <Clock className="w-4 h-4" />
+              Follow-up
+            </button>
+            <button
+              onClick={() => setTab('sentlog')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                tab === 'sentlog'
+                  ? 'bg-surface-3 text-slate-200 border border-border-2 shadow-sm'
+                  : 'text-muted hover:text-slate-300'
+              }`}
+            >
+              <CalendarSearch className="w-4 h-4" />
+              Sent Log
+            </button>
           </div>
 
           {tab === 'campaign' && <CampaignUpload />}
           {tab === 'upload' && <FileUpload />}
           {tab === 'emails' && <EmailTable />}
+          {tab === 'outreach' && <OutreachCheck />}
+          {tab === 'analytics' && <Analytics />}
+          {tab === 'followup' && <FollowUp />}
+          {tab === 'sentlog' && <SentLog />}
         </section>
       </main>
 

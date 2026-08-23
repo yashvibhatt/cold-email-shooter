@@ -5,8 +5,9 @@ import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, X, Send, ChevronD
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
 import { useUploadFile, useScheduleEmails } from '@/hooks/useEmails';
+import { useGoogleStatus } from '@/hooks/useAuth';
 import { cn, STATUS_CONFIG } from '@/lib/utils';
-import type { ParsedRow, UploadResult } from '@/lib/api';
+import type { ParsedRow, UploadResult, EmailProviderType } from '@/lib/api';
 
 interface EditableRow extends ParsedRow {
   selected: boolean;
@@ -22,6 +23,9 @@ export function FileUpload() {
   } | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [provider, setProvider] = useState<EmailProviderType>('OUTLOOK');
+  const { data: googleStatus } = useGoogleStatus();
 
   const uploadMutation = useUploadFile();
   const scheduleMutation = useScheduleEmails();
@@ -85,6 +89,7 @@ export function FileUpload() {
       const res = await scheduleMutation.mutateAsync({
         rows: selected,
         sourceFileId: uploadResult?.fileId,
+        provider,
       });
       setScheduleResult(res.data);
       showToast(
@@ -186,7 +191,33 @@ export function FileUpload() {
 
           {/* Actions */}
           <div className="flex items-center justify-between">
-            <div className="text-xs text-muted">{selectedCount} selected</div>
+            <div className="flex items-center gap-3">
+              <div className="text-xs text-muted">{selectedCount} selected</div>
+              <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border">
+                <button
+                  type="button"
+                  onClick={() => setProvider('OUTLOOK')}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+                    provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300'
+                  )}
+                >
+                  Outlook
+                </button>
+                <button
+                  type="button"
+                  onClick={() => googleStatus?.connected && setProvider('GMAIL')}
+                  disabled={!googleStatus?.connected}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+                    provider === 'GMAIL' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300',
+                    !googleStatus?.connected && 'opacity-40 cursor-not-allowed'
+                  )}
+                >
+                  Gmail{!googleStatus?.connected && ' (not connected)'}
+                </button>
+              </div>
+            </div>
             <div className="flex gap-2">
               <Button variant="secondary" size="sm" onClick={toggleAll}>
                 {rows.filter((r) => r.isValid).every((r) => r.selected) ? 'Deselect All' : 'Select All'}

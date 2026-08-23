@@ -155,6 +155,7 @@ export interface ContactRow {
   fullName: string;
   company: string;
   title: string;
+  location: string;
   rowIndex: number;
 }
 
@@ -195,6 +196,17 @@ const COLUMN_MAP: Record<string, string> = {
   'job title': 'title',
   'position': 'title',
   'role': 'title',
+  // location — prefer person-level city/state/country, fall back to company-level
+  'city': 'city',
+  'person city': 'city',
+  'location': 'city',
+  'state': 'state',
+  'person state': 'state',
+  'country': 'country',
+  'person country': 'country',
+  'company city': 'companyCity',
+  'company state': 'companyState',
+  'company country': 'companyCountry',
 };
 
 function mapHeaders(rawHeaders: string[]): Record<string, string> {
@@ -248,6 +260,12 @@ function extractContacts(records: Record<string, string>[]): ContactsParseResult
     const company   = mapping.company   ? (row[mapping.company]   ?? '').trim() : '';
     const title     = mapping.title     ? (row[mapping.title]     ?? '').trim() : '';
 
+    // Prefer the person's own city/state/country; fall back to the company's
+    const city    = (mapping.city    ? row[mapping.city]    : '') || (mapping.companyCity    ? row[mapping.companyCity]    : '') || '';
+    const state   = (mapping.state   ? row[mapping.state]   : '') || (mapping.companyState   ? row[mapping.companyState]   : '') || '';
+    const country = (mapping.country ? row[mapping.country] : '') || (mapping.companyCountry ? row[mapping.companyCountry] : '') || '';
+    const location = [city, state, country].map((s) => s.trim()).filter(Boolean).join(', ');
+
     contacts.push({
       email,
       firstName,
@@ -255,6 +273,7 @@ function extractContacts(records: Record<string, string>[]): ContactsParseResult
       fullName: [firstName, lastName].filter(Boolean).join(' '),
       company,
       title,
+      location,
       rowIndex: i + 2,
     });
   }

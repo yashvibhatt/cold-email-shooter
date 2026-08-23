@@ -8,12 +8,18 @@ import path from 'path';
 import fs from 'fs';
 import { env } from './config/env';
 import { authRouter } from './routes/auth';
+import { googleAuthRouter } from './routes/googleAuth';
 import { emailsRouter } from './routes/emails';
 import { filesRouter } from './routes/files';
 import { attachmentsRouter } from './routes/attachments';
+import { outreachRouter } from './routes/outreach';
+import { analyticsRouter } from './routes/analytics';
+import { followUpRouter } from './routes/followup';
+import { sentLogRouter } from './routes/sentLog';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { initEmailWorker } from './workers/emailWorker';
+import { initFollowUpWorker } from './workers/followUpWorker';
 import { prisma } from './db/prisma';
 import RedisStore from 'connect-redis';
 
@@ -67,9 +73,14 @@ app.use(
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
+app.use('/api/auth/google', googleAuthRouter);
 app.use('/api/emails', emailsRouter);
 app.use('/api/files', filesRouter);
 app.use('/api/attachments', attachmentsRouter);
+app.use('/api/outreach', outreachRouter);
+app.use('/api/analytics', analyticsRouter);
+app.use('/api/followup', followUpRouter);
+app.use('/api/sent-log', sentLogRouter);
 
 // Health check
 app.get('/health', async (_req, res) => {
@@ -95,6 +106,7 @@ async function start() {
     logger.info('Database connected');
 
     const worker = initEmailWorker();
+    const followUpWorker = initFollowUpWorker();
 
     const server = app.listen(env.PORT, () => {
       logger.info(`API server running on http://localhost:${env.PORT}`);
@@ -107,6 +119,7 @@ async function start() {
       logger.info(`${signal} received – shutting down gracefully`);
       server.close(async () => {
         await worker.close();
+        await followUpWorker.close();
         await prisma.$disconnect();
         await redisClient.quit();
         logger.info('Server shut down cleanly');

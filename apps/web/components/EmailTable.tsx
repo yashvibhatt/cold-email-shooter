@@ -248,6 +248,13 @@ export function EmailTable() {
                         : <ChevronDown className="w-3.5 h-3.5" />}
                     </td>
                     <td className="p-3 text-slate-300 font-mono max-w-[160px] truncate">
+                      <span
+                        className={cn(
+                          'inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle',
+                          job.provider === 'GMAIL' ? 'bg-red-400' : 'bg-blue-400'
+                        )}
+                        title={job.provider === 'GMAIL' ? 'Sent via Gmail' : 'Sent via Outlook'}
+                      />
                       {job.recipientEmail}
                     </td>
                     <td className="p-3 text-slate-400 max-w-[220px] truncate">

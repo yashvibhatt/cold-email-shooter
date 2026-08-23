@@ -22,6 +22,13 @@ model User {
   uploadedFiles UploadedFile[]
   attachments   Attachment[]
 
+  // ─── Gmail (secondary provider) ──────────────────────────────────────────
+  googleId            String?   @unique
+  googleEmail         String?
+  googleAccessToken   String?   @db.Text
+  googleRefreshToken  String?   @db.Text
+  googleTokenExpiry   DateTime?
+
   @@map("users")
 }
 
@@ -47,6 +54,9 @@ model EmailJob {
   scheduledDatetime DateTime
   timezone          String       @default("UTC")
   status            EmailStatus  @default(PENDING)
+  provider          EmailProvider @default(OUTLOOK)
+  company           String?
+  location          String?
   sourceFileId      String?
   sentAt            DateTime?
   failedReason      String?      @db.Text
@@ -100,4 +110,38 @@ enum EmailStatus {
   SENT
   FAILED
   CANCELLED
+}
+
+enum EmailProvider {
+  OUTLOOK
+  GMAIL
+}
+
+model FollowUp {
+  id               String           @id @default(cuid())
+  userId           String
+  emailJobId       String
+  recipientEmail   String
+  status           FollowUpStatus
+  oooNote          String?          @db.Text
+  oooReturnDate    DateTime?
+  originalSubject  String
+  originalSentAt   DateTime
+  followedUp       Boolean          @default(false)
+  followedUpAt     DateTime?
+  followUpCount    Int              @default(0)
+  lastFollowUpSentAt DateTime?
+  lastScannedAt    DateTime         @default(now())
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([userId, emailJobId])
+  @@index([userId, status])
+  @@map("follow_ups")
+}
+
+enum FollowUpStatus {
+  NO_RESPONSE
+  OUT_OF_OFFICE
+  RESPONDED
 }

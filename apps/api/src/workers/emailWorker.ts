@@ -2,7 +2,7 @@ import { Worker, Job } from 'bullmq';
 import { EmailStatus } from '@prisma/client';
 import { EmailJobData, emailQueue } from '../queues/emailQueue';
 import { prisma } from '../db/prisma';
-import { sendMailViaGraph } from '../services/graphService';
+import { sendMail } from '../services/mailService';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 
@@ -44,17 +44,32 @@ async function processEmailJob(job: Job<EmailJobData>): Promise<void> {
     return;
   }
 
+  // If the scheduled time was more than 30 minutes ago, the server was probably
+  // down for a long time and sending now would surprise the user.
+  const overdueMs = Date.now() - new Date(emailJob.scheduledDatetime).getTime();
+  if (overdueMs > 30 * 60 * 1000) {
+    const minutesLate = Math.round(overdueMs / 60000);
+    const reason = `Scheduled time expired — would have sent ${minutesLate} min late after server recovery`;
+    await prisma.emailJob.update({
+      where: { id: emailJobId },
+      data: { status: EmailStatus.FAILED, failedReason: reason },
+    });
+    logger.warn('Email job expired — skipping late send', { emailJobId, minutesLate });
+    return;
+  }
+
   try {
     const attachmentIds = Array.isArray(emailJob.attachmentIds)
       ? (emailJob.attachmentIds as string[])
       : [];
 
-    await sendMailViaGraph({
+    await sendMail({
       userId,
       to: emailJob.recipientEmail,
       subject: emailJob.subject,
       body: emailJob.body,
       attachmentIds,
+      provider: emailJob.provider,
     });
 
     await prisma.emailJob.update({

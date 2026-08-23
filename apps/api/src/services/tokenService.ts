@@ -8,7 +8,7 @@ import { env } from '../config/env';
 import { prisma } from '../db/prisma';
 import { logger } from '../utils/logger';
 
-const SCOPES = ['openid', 'profile', 'email', 'offline_access', 'Mail.Send', 'User.Read'];
+const SCOPES = ['openid', 'profile', 'email', 'offline_access', 'Mail.Send', 'Mail.ReadWrite', 'User.Read'];
 
 /**
  * Builds a ConfidentialClientApplication that reads its token cache from the

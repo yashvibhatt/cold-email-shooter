@@ -32,6 +32,7 @@ export const scheduleEmailsSchema = z.object({
     .max(500, 'Maximum 500 emails per batch'),
   sourceFileId: z.string().optional(),
   timezone: z.string().optional().default('UTC'),
+  provider: z.enum(['OUTLOOK', 'GMAIL']).optional().default('OUTLOOK'),
 });
 
 export type ScheduleEmailsInput = z.infer<typeof scheduleEmailsSchema>;

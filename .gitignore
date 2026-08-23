@@ -8,3 +8,8 @@ uploads/
 .DS_Store
 .next/
 .turbo/
+*.tsbuildinfo
+
+# Exported contact/recipient data — never commit real outreach data
+*.csv
+!test-data/*.csv

@@ -15,6 +15,9 @@ const envSchema = z.object({
   MICROSOFT_CLIENT_SECRET: z.string().min(1, 'MICROSOFT_CLIENT_SECRET is required'),
   MICROSOFT_TENANT_ID: z.string().default('common'),
   MICROSOFT_REDIRECT_URI: z.string().min(1, 'MICROSOFT_REDIRECT_URI is required'),
+  GOOGLE_CLIENT_ID: z.string().optional().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().optional().default(''),
+  GOOGLE_REDIRECT_URI: z.string().optional().default(''),
   SAFE_MODE: z
     .string()
     .default('true')

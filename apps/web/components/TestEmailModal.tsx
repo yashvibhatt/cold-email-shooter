@@ -5,8 +5,9 @@ import { X, Send, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { AttachmentPicker } from '@/components/AttachmentPicker';
 import { useSendTest } from '@/hooks/useEmails';
+import { useGoogleStatus } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
-import type { AttachmentInfo } from '@/lib/api';
+import type { AttachmentInfo, EmailProviderType } from '@/lib/api';
 
 interface Props {
   onClose: () => void;
@@ -16,6 +17,8 @@ export function TestEmailModal({ onClose }: Props) {
   const [form, setForm]           = useState({ to: '', subject: 'Test email', body: 'Hello! This is a test email.' });
   const [attachments, setAtt]     = useState<AttachmentInfo[]>([]);
   const [result, setResult]       = useState<{ ok: boolean; msg: string } | null>(null);
+  const [provider, setProvider]   = useState<EmailProviderType>('OUTLOOK');
+  const { data: googleStatus }    = useGoogleStatus();
   const mutation = useSendTest();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,6 +27,7 @@ export function TestEmailModal({ onClose }: Props) {
       const res = await mutation.mutateAsync({
         ...form,
         attachmentIds: attachments.map((a) => a.id),
+        provider,
       });
       setResult({ ok: true, msg: res.data.message });
     } catch (err: any) {
@@ -53,6 +57,34 @@ export function TestEmailModal({ onClose }: Props) {
               {result.msg}
             </div>
           )}
+
+          <div className="space-y-1">
+            <label className="text-xs text-muted font-mono">Send via</label>
+            <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border w-fit">
+              <button
+                type="button"
+                onClick={() => setProvider('OUTLOOK')}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                  provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300'
+                )}
+              >
+                Outlook
+              </button>
+              <button
+                type="button"
+                onClick={() => googleStatus?.connected && setProvider('GMAIL')}
+                disabled={!googleStatus?.connected}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                  provider === 'GMAIL' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300',
+                  !googleStatus?.connected && 'opacity-40 cursor-not-allowed'
+                )}
+              >
+                Gmail{!googleStatus?.connected && ' (not connected)'}
+              </button>
+            </div>
+          </div>
 
           <div className="space-y-1">
             <label className="text-xs text-muted font-mono">To</label>

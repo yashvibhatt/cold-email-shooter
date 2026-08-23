@@ -4,13 +4,14 @@ import { useState, useCallback, useRef } from 'react';
 import {
   Upload, CheckCircle2, AlertTriangle, X, Send,
   ChevronDown, ChevronUp, Sparkles, Clock,
-  ChevronLeft, ChevronRight, Users, Eye,
+  ChevronLeft, ChevronRight, Users, Eye, Link2, Mail,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { AttachmentPicker } from '@/components/AttachmentPicker';
 import { useUploadContacts, useScheduleCampaign } from '@/hooks/useEmails';
+import { useGoogleStatus } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
-import type { ContactRow, ContactsUploadResult, AttachmentInfo } from '@/lib/api';
+import type { ContactRow, ContactsUploadResult, AttachmentInfo, EmailProviderType } from '@/lib/api';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ const VARIABLE_HINTS = [
   { var: '{{full_name}}',  desc: 'Full name',   example: 'Claudia Bustamante' },
   { var: '{{company}}',    desc: 'Company',     example: 'McKinsey' },
   { var: '{{title}}',      desc: 'Job title',   example: 'Recruiter' },
+  { var: '{{location}}',   desc: 'Location',    example: 'New York, NY' },
 ];
 
 // ─── template engine ──────────────────────────────────────────────────────────
@@ -37,7 +39,8 @@ function applyTemplate(template: string, contact: ContactRow): string {
     .replace(/\{\{last_name\}\}/gi,  contact.lastName   || '')
     .replace(/\{\{full_name\}\}/gi,  contact.fullName   || contact.firstName || 'there')
     .replace(/\{\{company\}\}/gi,    contact.company    || '')
-    .replace(/\{\{title\}\}/gi,      contact.title      || '');
+    .replace(/\{\{title\}\}/gi,      contact.title      || '')
+    .replace(/\{\{location\}\}/gi,   contact.location   || '');
 }
 
 function firstLine(text: string): string {
@@ -265,10 +268,17 @@ Best regards`
   const [startTime,      setStartTime]      = useState('09:00');
   const [timezone,       setTimezone]       = useState('America/Chicago');
   const [staggerMinutes, setStaggerMinutes] = useState(5);
+  const [provider,       setProvider]       = useState<EmailProviderType>('OUTLOOK');
+
+  const { data: googleStatus } = useGoogleStatus();
 
   const fileInputRef   = useRef<HTMLInputElement>(null);
   const subjectRef     = useRef<HTMLInputElement>(null);
   const bodyRef        = useRef<HTMLTextAreaElement>(null);
+
+  const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
+  const [linkUrl,         setLinkUrl]         = useState('');
+  const bodySelectionRef  = useRef<{ start: number; end: number } | null>(null);
 
   const uploadMutation   = useUploadContacts();
   const campaignMutation = useScheduleCampaign();
@@ -319,6 +329,36 @@ Best regards`
     }
   };
 
+  const openLinkPopover = () => {
+    const el = bodyRef.current;
+    bodySelectionRef.current = {
+      start: el?.selectionStart ?? el?.value.length ?? body.length,
+      end:   el?.selectionEnd   ?? el?.value.length ?? body.length,
+    };
+    setLinkUrl('');
+    setLinkPopoverOpen(true);
+  };
+
+  const insertLinkButton = () => {
+    let url = linkUrl.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+
+    const html = `<a href="${url}" target="_blank">Click Here</a>`;
+
+    const { start, end } = bodySelectionRef.current ?? { start: body.length, end: body.length };
+    const nextBody = body.slice(0, start) + html + body.slice(end);
+    setBody(nextBody);
+    setLinkPopoverOpen(false);
+    setLinkUrl('');
+
+    requestAnimationFrame(() => {
+      const el = bodyRef.current;
+      el?.focus();
+      el?.setSelectionRange(start + html.length, start + html.length);
+    });
+  };
+
   const handleSchedule = async () => {
     if (!uploadResult) return;
     try {
@@ -332,6 +372,7 @@ Best regards`
         staggerMinutes,
         sourceFileId:  uploadResult.fileId,
         attachmentIds: attachments.map((a) => a.id),
+        provider,
       });
       setScheduleResult(res.data);
       showToast(
@@ -480,7 +521,46 @@ Best regards`
               <span className="text-primary/60 font-sans">→ {v.example}</span>
             </button>
           ))}
+
+          <button
+            type="button"
+            onClick={openLinkPopover}
+            title="Insert a &quot;Click Here&quot; link button into the email body"
+            className="flex items-center gap-1 text-xs bg-primary/10 text-blue-400 border border-primary/20 px-2 py-0.5 rounded-full hover:bg-primary/20 active:scale-95 transition-all font-mono"
+          >
+            <Link2 className="w-2.5 h-2.5" />
+            Link button
+          </button>
         </div>
+
+        {/* Link URL popover */}
+        {linkPopoverOpen && (
+          <div className="flex items-center gap-2 bg-surface-3 border border-border rounded-lg px-3 py-2">
+            <Link2 className="w-3.5 h-3.5 text-muted flex-shrink-0" />
+            <input
+              autoFocus
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); insertLinkButton(); }
+                if (e.key === 'Escape') setLinkPopoverOpen(false);
+              }}
+              placeholder="Paste link (e.g. https://docsend.com/view/...)"
+              className="flex-1 bg-transparent text-sm text-slate-200 focus:outline-none placeholder:text-muted"
+            />
+            <button
+              type="button"
+              onClick={insertLinkButton}
+              disabled={!linkUrl.trim()}
+              className="text-xs font-medium bg-primary text-white px-2.5 py-1 rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Insert
+            </button>
+            <button type="button" onClick={() => setLinkPopoverOpen(false)}>
+              <X className="w-3.5 h-3.5 text-muted hover:text-slate-200" />
+            </button>
+          </div>
+        )}
 
         <div className="space-y-3">
           {/* Subject */}
@@ -529,6 +609,39 @@ Best regards`
         <div className="flex items-center gap-2">
           <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold flex-shrink-0">3</div>
           <h3 className="font-semibold text-slate-200 text-sm">Set schedule</h3>
+        </div>
+
+        {/* Send via */}
+        <div className="space-y-1">
+          <label className="text-xs text-muted font-mono">Send via</label>
+          <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border w-fit">
+            <button
+              type="button"
+              onClick={() => setProvider('OUTLOOK')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300'
+              )}
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Outlook
+            </button>
+            <button
+              type="button"
+              onClick={() => googleStatus?.connected && setProvider('GMAIL')}
+              disabled={!googleStatus?.connected}
+              title={!googleStatus?.connected ? 'Connect Gmail first (top-right of the dashboard)' : undefined}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                provider === 'GMAIL' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300',
+                !googleStatus?.connected && 'opacity-40 cursor-not-allowed'
+              )}
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Gmail
+              {!googleStatus?.connected && <span className="text-subtle">(not connected)</span>}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

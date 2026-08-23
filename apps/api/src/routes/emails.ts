@@ -13,7 +13,7 @@ import {
   AppError,
 } from '../utils/validation';
 import { buildIdempotencyKey } from '../utils/idempotency';
-import { sendMailViaGraph } from '../services/graphService';
+import { sendMail } from '../services/mailService';
 import { logger } from '../utils/logger';
 
 export const emailsRouter = Router();
@@ -193,6 +193,7 @@ emailsRouter.post(
               scheduledDatetime,
               timezone: row.timezone || input.timezone || 'UTC',
               status: EmailStatus.SCHEDULED,
+              provider: input.provider,
               sourceFileId: input.sourceFileId ?? null,
               idempotencyKey,
               attachmentIds: (req.body.attachmentIds ?? []) as string[],
@@ -254,8 +255,9 @@ emailsRouter.post(
         staggerMinutes = 0,
         sourceFileId,
         attachmentIds = [],
+        provider = 'OUTLOOK',
       } = req.body as {
-        contacts: Array<{ email: string; firstName: string; lastName: string; fullName: string; company: string; title: string }>;
+        contacts: Array<{ email: string; firstName: string; lastName: string; fullName: string; company: string; title: string; location?: string }>;
         subject: string;
         body: string;
         startDate: string;
@@ -264,7 +266,12 @@ emailsRouter.post(
         staggerMinutes?: number;
         sourceFileId?: string;
         attachmentIds?: string[];
+        provider?: 'OUTLOOK' | 'GMAIL';
       };
+
+      if (provider !== 'OUTLOOK' && provider !== 'GMAIL') {
+        throw new ValidationError('provider must be OUTLOOK or GMAIL');
+      }
 
       if (!contacts?.length) throw new ValidationError('contacts array is required');
       if (!subject?.trim())  throw new ValidationError('subject is required');
@@ -278,7 +285,8 @@ emailsRouter.post(
           .replace(/\{\{last_name\}\}/gi,   c.lastName  || '')
           .replace(/\{\{full_name\}\}/gi,   c.fullName  || c.firstName || 'there')
           .replace(/\{\{company\}\}/gi,     c.company   || '')
-          .replace(/\{\{title\}\}/gi,       c.title     || '');
+          .replace(/\{\{title\}\}/gi,       c.title     || '')
+          .replace(/\{\{location\}\}/gi,    c.location  || '');
       }
 
       const baseLocalStr = `${startDate}T${startTime.length === 5 ? startTime + ':00' : startTime}`;
@@ -338,6 +346,9 @@ emailsRouter.post(
               scheduledDatetime,
               timezone,
               status: EmailStatus.SCHEDULED,
+              provider,
+              company: contact.company || null,
+              location: contact.location || null,
               sourceFileId: sourceFileId ?? null,
               attachmentIds,
               idempotencyKey,
@@ -464,18 +475,22 @@ emailsRouter.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { currentUser } = req as AuthedRequest;
-      const { to, subject, body, attachmentIds = [] } = req.body;
+      const { to, subject, body, attachmentIds = [], provider = 'OUTLOOK' } = req.body;
 
       if (!to || !subject || !body) {
         throw new ValidationError('to, subject, and body are required for test email');
       }
+      if (provider !== 'OUTLOOK' && provider !== 'GMAIL') {
+        throw new ValidationError('provider must be OUTLOOK or GMAIL');
+      }
 
-      await sendMailViaGraph({
+      await sendMail({
         userId: currentUser.id,
         to,
         subject,
         body,
         attachmentIds,
+        provider,
       });
 
       res.json({

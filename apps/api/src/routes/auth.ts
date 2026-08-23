@@ -10,7 +10,7 @@ import { requireAuth, AuthedRequest } from '../middleware/auth';
 
 export const authRouter = Router();
 
-const SCOPES = ['openid', 'profile', 'email', 'offline_access', 'Mail.Send', 'User.Read'];
+const SCOPES = ['openid', 'profile', 'email', 'offline_access', 'Mail.Send', 'Mail.ReadWrite', 'User.Read'];
 
 function getMsalClient(): ConfidentialClientApplication {
   return new ConfidentialClientApplication({

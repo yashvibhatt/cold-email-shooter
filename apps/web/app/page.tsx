@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Mail, Zap, Shield, Clock, ArrowRight, Loader2 } from 'lucide-react';
-import { useAuth, useLogin } from '@/hooks/useAuth';
+import { useAuth, useLogin, useConnectGoogle } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/Button';
 
 const FEATURES = [
@@ -33,6 +33,7 @@ export default function HomePage() {
   const { data: user, isLoading } = useAuth();
   const router = useRouter();
   const login = useLogin();
+  const googleLogin = useConnectGoogle();
 
   useEffect(() => {
     if (user) router.replace('/dashboard');
@@ -80,15 +81,28 @@ export default function HomePage() {
             handle the rest — reliably, without duplicates, with full status tracking.
           </p>
 
-          <Button
-            size="lg"
-            onClick={() => login.mutate()}
-            loading={login.isPending}
-            className="text-base px-7 py-3 h-auto"
-          >
-            Connect with Microsoft
-            <ArrowRight className="w-4 h-4" />
-          </Button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Button
+              size="lg"
+              onClick={() => login.mutate()}
+              loading={login.isPending}
+              className="text-base px-7 py-3 h-auto"
+            >
+              Connect with Microsoft
+              <ArrowRight className="w-4 h-4" />
+            </Button>
+            <Button
+              size="lg"
+              variant="secondary"
+              onClick={() => googleLogin.mutate()}
+              loading={googleLogin.isPending}
+              className="text-base px-7 py-3 h-auto"
+            >
+              Sign in with Google
+              <ArrowRight className="w-4 h-4" />
+            </Button>
+          </div>
+          <p className="text-xs text-subtle -mt-4">No Outlook account? Sign in with Google and send from Gmail instead.</p>
         </div>
 
         {/* Features grid */}

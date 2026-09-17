@@ -36,6 +36,7 @@ export function getGoogleLoginUrl(state: string): string {
 export interface GoogleCallbackResult {
   googleId: string;
   googleEmail: string;
+  displayName: string;
   accessToken: string;
   refreshToken: string | null;
   expiryDate: number;
@@ -60,6 +61,7 @@ export async function handleGoogleCallback(code: string): Promise<GoogleCallback
   return {
     googleId: profile.id,
     googleEmail: profile.email,
+    displayName: profile.name || profile.email,
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token ?? null,
     expiryDate: tokens.expiry_date ?? Date.now() + 3600 * 1000,

@@ -124,6 +124,7 @@ authRouter.get('/me', requireAuth, (req: Request, res: Response) => {
       id: currentUser.id,
       email: currentUser.email,
       displayName: currentUser.displayName,
+      hasOutlook: !!currentUser.microsoftId,
     },
   });
 });
@@ -132,6 +133,15 @@ authRouter.get('/me', requireAuth, (req: Request, res: Response) => {
 authRouter.get('/token-status', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { currentUser } = req as AuthedRequest;
+
+    if (!currentUser.tokenExpiry) {
+      res.json({
+        success: true,
+        data: { valid: false, expiresInMinutes: 0, hasMsalCache: false, needsRelogin: false, noOutlookAccount: true },
+      });
+      return;
+    }
+
     const expiresInMs = currentUser.tokenExpiry.getTime() - Date.now();
     const hasMsalCache = !!(currentUser as any).msalCacheJson;
 

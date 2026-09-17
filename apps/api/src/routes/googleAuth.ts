@@ -13,8 +13,11 @@ import { requireAuth, AuthedRequest } from '../middleware/auth';
 
 export const googleAuthRouter = Router();
 
-// GET /api/auth/google/login — must already be logged in via Outlook; Gmail is a secondary connection
-googleAuthRouter.get('/login', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+// GET /api/auth/google/login — used both as a secondary "connect Gmail" flow for a
+// user already logged in via Microsoft, AND as a standalone "Sign in with Google" login
+// for users with no Microsoft account at all. Which one happens is decided in the
+// callback based on whether a session already exists.
+googleAuthRouter.get('/login', async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!isGoogleConfigured()) {
       throw new AppError(
@@ -43,9 +46,6 @@ googleAuthRouter.get('/callback', async (req: Request, res: Response, next: Next
       return res.redirect(`${env.FRONTEND_URL}/dashboard?googleError=${encodeURIComponent(error)}`);
     }
 
-    if (!req.session.userId) {
-      throw new AuthError('Not logged in. Please log in with Microsoft first.');
-    }
     if (!state || state !== req.session.googleOauthState) {
       throw new AuthError('Invalid OAuth state. Possible CSRF attack.');
     }
@@ -58,23 +58,62 @@ googleAuthRouter.get('/callback', async (req: Request, res: Response, next: Next
     if (!result.refreshToken) {
       // Happens if the user previously connected and Google didn't re-issue a refresh
       // token (prompt=consent should prevent this, but guard anyway).
-      logger.warn('Google callback returned no refresh token', { userId: req.session.userId });
+      logger.warn('Google callback returned no refresh token', { googleEmail: result.googleEmail });
     }
 
-    await prisma.user.update({
-      where: { id: req.session.userId },
-      data: {
-        googleId: result.googleId,
-        googleEmail: result.googleEmail,
-        googleAccessToken: result.accessToken,
-        ...(result.refreshToken ? { googleRefreshToken: result.refreshToken } : {}),
-        googleTokenExpiry: new Date(result.expiryDate),
-      },
-    });
+    if (req.session.userId) {
+      // Already logged in (via Microsoft) — this is a "connect Gmail as a second
+      // sending provider" flow. Attach Google fields to the existing account.
+      await prisma.user.update({
+        where: { id: req.session.userId },
+        data: {
+          googleId: result.googleId,
+          googleEmail: result.googleEmail,
+          googleAccessToken: result.accessToken,
+          ...(result.refreshToken ? { googleRefreshToken: result.refreshToken } : {}),
+          googleTokenExpiry: new Date(result.expiryDate),
+        },
+      });
 
-    logger.info('Gmail connected', { userId: req.session.userId, googleEmail: result.googleEmail });
+      logger.info('Gmail connected', { userId: req.session.userId, googleEmail: result.googleEmail });
+      return res.redirect(`${env.FRONTEND_URL}/dashboard?googleConnected=1`);
+    }
 
-    return res.redirect(`${env.FRONTEND_URL}/dashboard?googleConnected=1`);
+    // No session — standalone "Sign in with Google" login. Find or create a user
+    // keyed on googleId, with no Microsoft account attached at all.
+    let user = await prisma.user.findUnique({ where: { googleId: result.googleId } });
+
+    if (user) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          googleEmail: result.googleEmail,
+          googleAccessToken: result.accessToken,
+          ...(result.refreshToken ? { googleRefreshToken: result.refreshToken } : {}),
+          googleTokenExpiry: new Date(result.expiryDate),
+        },
+      });
+    } else {
+      if (!result.refreshToken) {
+        throw new AuthError('Google did not grant offline access. Please try signing in again.');
+      }
+      user = await prisma.user.create({
+        data: {
+          email: result.googleEmail,
+          displayName: result.displayName,
+          googleId: result.googleId,
+          googleEmail: result.googleEmail,
+          googleAccessToken: result.accessToken,
+          googleRefreshToken: result.refreshToken,
+          googleTokenExpiry: new Date(result.expiryDate),
+        },
+      });
+    }
+
+    req.session.userId = user.id;
+    logger.info('User logged in via Google', { userId: user.id, email: user.email });
+
+    return res.redirect(`${env.FRONTEND_URL}/dashboard`);
   } catch (err) {
     next(err);
   }

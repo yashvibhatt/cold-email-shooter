@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, X, Send, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
 import { useUploadFile, useScheduleEmails } from '@/hooks/useEmails';
-import { useGoogleStatus } from '@/hooks/useAuth';
+import { useGoogleStatus, useAuth } from '@/hooks/useAuth';
 import { cn, STATUS_CONFIG } from '@/lib/utils';
 import type { ParsedRow, UploadResult, EmailProviderType } from '@/lib/api';
 
@@ -26,6 +26,13 @@ export function FileUpload() {
 
   const [provider, setProvider] = useState<EmailProviderType>('OUTLOOK');
   const { data: googleStatus } = useGoogleStatus();
+  const { data: authUser } = useAuth();
+
+  useEffect(() => {
+    if (authUser && !authUser.hasOutlook && provider === 'OUTLOOK' && googleStatus?.connected) {
+      setProvider('GMAIL');
+    }
+  }, [authUser, googleStatus?.connected]);
 
   const uploadMutation = useUploadFile();
   const scheduleMutation = useScheduleEmails();
@@ -196,13 +203,15 @@ export function FileUpload() {
               <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border">
                 <button
                   type="button"
-                  onClick={() => setProvider('OUTLOOK')}
+                  onClick={() => authUser?.hasOutlook && setProvider('OUTLOOK')}
+                  disabled={!authUser?.hasOutlook}
                   className={cn(
                     'px-2.5 py-1 rounded-md text-xs font-medium transition-all',
-                    provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300'
+                    provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300',
+                    !authUser?.hasOutlook && 'opacity-40 cursor-not-allowed'
                   )}
                 >
-                  Outlook
+                  Outlook{!authUser?.hasOutlook && ' (not connected)'}
                 </button>
                 <button
                   type="button"

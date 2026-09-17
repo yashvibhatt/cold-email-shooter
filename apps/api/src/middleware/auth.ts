@@ -28,11 +28,11 @@ export async function requireAuth(
 export type AuthedRequest = Request & {
   currentUser: {
     id: string;
-    microsoftId: string;
+    microsoftId: string | null;
     email: string;
     displayName: string;
-    accessToken: string;
-    refreshToken: string;
-    tokenExpiry: Date;
+    accessToken: string | null;
+    refreshToken: string | null;
+    tokenExpiry: Date | null;
   };
 };

@@ -47,7 +47,7 @@ async function request<T>(
 
 export const authApi = {
   getLoginUrl: () => request<{ authUrl: string }>('/auth/login'),
-  me: () => request<{ id: string; email: string; displayName: string }>('/auth/me'),
+  me: () => request<{ id: string; email: string; displayName: string; hasOutlook: boolean }>('/auth/me'),
   logout: () => request<{ message: string }>('/auth/logout', { method: 'POST' }),
 };
 

@@ -7,6 +7,7 @@ import {
 import { env } from '../config/env';
 import { prisma } from '../db/prisma';
 import { logger } from '../utils/logger';
+import { AppError } from '../utils/validation';
 
 const SCOPES = ['openid', 'profile', 'email', 'offline_access', 'Mail.Send', 'Mail.ReadWrite', 'User.Read'];
 
@@ -51,6 +52,15 @@ function buildMsalClientWithCache(initialCacheJson: string | null | undefined): 
  */
 export async function getValidAccessToken(userId: string): Promise<string> {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+  if (!user.microsoftId || !user.accessToken || !user.tokenExpiry) {
+    throw new AppError(
+      'No Microsoft/Outlook account connected. This feature only works for Outlook-sent email.',
+      422,
+      'NO_OUTLOOK_ACCOUNT'
+    );
+  }
+
   const buffer = 60 * 1000; // refresh 60s before expiry
 
   if (user.tokenExpiry.getTime() - Date.now() > buffer) {

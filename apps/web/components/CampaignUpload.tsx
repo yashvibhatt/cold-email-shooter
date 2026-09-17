@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Upload, CheckCircle2, AlertTriangle, X, Send,
   ChevronDown, ChevronUp, Sparkles, Clock,
@@ -10,7 +10,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { AttachmentPicker } from '@/components/AttachmentPicker';
 import { useUploadContacts, useScheduleCampaign } from '@/hooks/useEmails';
-import { useGoogleStatus } from '@/hooks/useAuth';
+import { useGoogleStatus, useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import type { ContactRow, ContactsUploadResult, AttachmentInfo, EmailProviderType } from '@/lib/api';
 import { resolveTimezoneFromLocation } from '@/lib/timezone';
@@ -462,6 +462,16 @@ Best regards`
   const [myTimezone,     setMyTimezone]     = useState('America/New_York');
 
   const { data: googleStatus } = useGoogleStatus();
+  const { data: authUser } = useAuth();
+
+  // Default to whichever provider is actually usable — most accounts have
+  // Outlook, but a Gmail-only login (no Microsoft account at all) needs Gmail
+  // as the default instead of an unusable disabled option.
+  useEffect(() => {
+    if (authUser && !authUser.hasOutlook && provider === 'OUTLOOK' && googleStatus?.connected) {
+      setProvider('GMAIL');
+    }
+  }, [authUser, googleStatus?.connected]);
 
   const fileInputRef   = useRef<HTMLInputElement>(null);
 
@@ -866,14 +876,18 @@ Best regards`
           <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border w-fit">
             <button
               type="button"
-              onClick={() => setProvider('OUTLOOK')}
+              onClick={() => authUser?.hasOutlook && setProvider('OUTLOOK')}
+              disabled={!authUser?.hasOutlook}
+              title={!authUser?.hasOutlook ? 'No Microsoft/Outlook account connected' : undefined}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all',
-                provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300'
+                provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300',
+                !authUser?.hasOutlook && 'opacity-40 cursor-not-allowed'
               )}
             >
               <Mail className="w-3.5 h-3.5" />
               Outlook
+              {!authUser?.hasOutlook && <span className="text-subtle">(not connected)</span>}
             </button>
             <button
               type="button"

@@ -71,8 +71,17 @@ followUpRouter.post(
         if (!latestJobByRecipient.has(key)) latestJobByRecipient.set(key, job); // already ordered desc
       }
 
-      const accessToken = await getValidAccessToken(currentUser.id);
-      const replies = await getInboxReplies(accessToken, since.toISOString());
+      // Reply/OOO detection only works for an Outlook-connected account (Graph Inbox
+      // scan). A Gmail-only user still gets the rest of this endpoint — their sent
+      // jobs are flagged NO_RESPONSE below so manual follow-ups can still be sent —
+      // just without automatic reply detection.
+      let replies: Awaited<ReturnType<typeof getInboxReplies>> = [];
+      try {
+        const accessToken = await getValidAccessToken(currentUser.id);
+        replies = await getInboxReplies(accessToken, since.toISOString());
+      } catch (err) {
+        if (!(err instanceof AppError && err.code === 'NO_OUTLOOK_ACCOUNT')) throw err;
+      }
 
       const latestReplyByAddress = new Map<string, (typeof replies)[number]>();
       for (const reply of replies) {

@@ -72,10 +72,36 @@ async function processEmailJob(job: Job<EmailJobData>): Promise<void> {
       provider: emailJob.provider,
     });
 
+    const sentAt = new Date();
     await prisma.emailJob.update({
       where: { id: emailJobId },
-      data: { status: EmailStatus.SENT, sentAt: new Date(), failedReason: null },
+      data: { status: EmailStatus.SENT, sentAt, failedReason: null },
     });
+
+    // Seed the follow-up list immediately on send, for every provider — not just
+    // Outlook. Automatic reply detection (POST /followup/scan) is Outlook-only,
+    // but this makes manual follow-ups selectable right away regardless of
+    // provider, and fixes campaigns not showing up until someone remembers to
+    // click "Scan for replies".
+    try {
+      await prisma.followUp.upsert({
+        where: { userId_emailJobId: { userId, emailJobId } },
+        create: {
+          userId,
+          emailJobId,
+          recipientEmail: emailJob.recipientEmail,
+          status: 'NO_RESPONSE',
+          originalSubject: emailJob.subject,
+          originalSentAt: sentAt,
+        },
+        update: {},
+      });
+    } catch (followUpErr) {
+      logger.warn('Failed to seed follow-up row after send', {
+        emailJobId,
+        error: followUpErr instanceof Error ? followUpErr.message : String(followUpErr),
+      });
+    }
 
     await prisma.emailSendLog.create({
       data: {

@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Send, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { AttachmentPicker } from '@/components/AttachmentPicker';
 import { useSendTest } from '@/hooks/useEmails';
-import { useGoogleStatus } from '@/hooks/useAuth';
+import { useGoogleStatus, useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import type { AttachmentInfo, EmailProviderType } from '@/lib/api';
 
@@ -17,8 +17,16 @@ export function TestEmailModal({ onClose }: Props) {
   const [form, setForm]           = useState({ to: '', subject: 'Test email', body: 'Hello! This is a test email.' });
   const [attachments, setAtt]     = useState<AttachmentInfo[]>([]);
   const [result, setResult]       = useState<{ ok: boolean; msg: string } | null>(null);
-  const [provider, setProvider]   = useState<EmailProviderType>('OUTLOOK');
   const { data: googleStatus }    = useGoogleStatus();
+  const { data: authUser }        = useAuth();
+  const [provider, setProvider]   = useState<EmailProviderType>('OUTLOOK');
+
+  useEffect(() => {
+    if (authUser && !authUser.hasOutlook && provider === 'OUTLOOK' && googleStatus?.connected) {
+      setProvider('GMAIL');
+    }
+  }, [authUser, googleStatus?.connected]);
+
   const mutation = useSendTest();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -63,13 +71,15 @@ export function TestEmailModal({ onClose }: Props) {
             <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border w-fit">
               <button
                 type="button"
-                onClick={() => setProvider('OUTLOOK')}
+                onClick={() => authUser?.hasOutlook && setProvider('OUTLOOK')}
+                disabled={!authUser?.hasOutlook}
                 className={cn(
                   'px-3 py-1.5 rounded-md text-xs font-medium transition-all',
-                  provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300'
+                  provider === 'OUTLOOK' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300',
+                  !authUser?.hasOutlook && 'opacity-40 cursor-not-allowed'
                 )}
               >
-                Outlook
+                Outlook{!authUser?.hasOutlook && ' (not connected)'}
               </button>
               <button
                 type="button"

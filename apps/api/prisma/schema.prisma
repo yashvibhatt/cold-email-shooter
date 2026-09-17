@@ -9,12 +9,14 @@ datasource db {
 
 model User {
   id            String         @id @default(cuid())
-  microsoftId   String         @unique
+  // Nullable because a user can sign in with Google-only (no Microsoft account at all) —
+  // see googleAuth.ts's standalone login flow.
+  microsoftId   String?        @unique
   email         String         @unique
   displayName   String
-  accessToken   String         @db.Text
-  refreshToken  String         @db.Text
-  tokenExpiry   DateTime
+  accessToken   String?        @db.Text
+  refreshToken  String?        @db.Text
+  tokenExpiry   DateTime?
   msalCacheJson String?        @db.Text
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt

@@ -183,7 +183,16 @@ export const outreachApi = {
 export const followUpApi = {
   list: () => request<{ list: FollowUpRow[] }>('/followup'),
   scan: (days = 14) => request<{ flagged: number; resolved: number; list: FollowUpRow[] }>(`/followup/scan?days=${days}`, { method: 'POST' }),
-  syncManual: () => request<{ manualSynced: number; checked: number; list: FollowUpRow[] }>('/followup/sync-manual', { method: 'POST' }),
+  syncManualStart: () => request<{ started?: boolean; alreadyRunning?: boolean }>('/followup/sync-manual', { method: 'POST' }),
+  syncManualStatus: () =>
+    request<{
+      status: 'idle' | 'running' | 'done' | 'error';
+      checked?: number;
+      total?: number;
+      manualSynced?: number;
+      error?: string;
+      list?: FollowUpRow[];
+    }>('/followup/sync-manual/status'),
   setFollowedUp: (id: string, followedUp: boolean) =>
     request<FollowUpRow>(`/followup/${id}`, { method: 'PATCH', body: JSON.stringify({ followedUp }) }),
   remove: (id: string) => request<{ message: string }>(`/followup/${id}`, { method: 'DELETE' }),
@@ -351,6 +360,10 @@ export interface ContactRow {
   title: string;
   location: string;
   rowIndex: number;
+  subjectOverride?: string;
+  bodyOverride?: string;
+  scheduledAtOverride?: string;
+  timezoneOverride?: string;
 }
 
 export interface ContactsUploadResult {

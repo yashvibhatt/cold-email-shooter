@@ -257,7 +257,7 @@ emailsRouter.post(
         attachmentIds = [],
         provider = 'OUTLOOK',
       } = req.body as {
-        contacts: Array<{ email: string; firstName: string; lastName: string; fullName: string; company: string; title: string; location?: string }>;
+        contacts: Array<{ email: string; firstName: string; lastName: string; fullName: string; company: string; title: string; location?: string; subjectOverride?: string; bodyOverride?: string; scheduledAtOverride?: string; timezoneOverride?: string }>;
         subject: string;
         body: string;
         startDate: string;
@@ -319,9 +319,15 @@ emailsRouter.post(
       for (let i = 0; i < contacts.length; i++) {
         const contact = contacts[i];
         try {
-          const scheduledDatetime = new Date(baseUtc.getTime() + i * staggerMinutes * 60 * 1000);
-          const expandedSubject = applyTemplate(subject, contact);
-          const expandedBody    = applyTemplate(body, contact);
+          let scheduledDatetime = contact.scheduledAtOverride ? new Date(contact.scheduledAtOverride) : null;
+          if (!scheduledDatetime || !isValid(scheduledDatetime)) {
+            scheduledDatetime = new Date(baseUtc.getTime() + i * staggerMinutes * 60 * 1000);
+          }
+          const jobTimezone = contact.timezoneOverride || timezone;
+          const subjectTemplate = contact.subjectOverride?.trim() || subject;
+          const bodyTemplate    = contact.bodyOverride?.trim()    || body;
+          const expandedSubject = applyTemplate(subjectTemplate, contact);
+          const expandedBody    = applyTemplate(bodyTemplate, contact);
 
           const idempotencyKey = buildIdempotencyKey({
             userId: currentUser.id,
@@ -344,7 +350,7 @@ emailsRouter.post(
               subject: expandedSubject,
               body: expandedBody,
               scheduledDatetime,
-              timezone,
+              timezone: jobTimezone,
               status: EmailStatus.SCHEDULED,
               provider,
               company: contact.company || null,

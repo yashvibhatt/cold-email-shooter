@@ -401,19 +401,23 @@ async function countManualFollowUpsSent(
  */
 export async function detectManualFollowUps(
   accessToken: string,
-  items: Array<{ recipientEmail: string; originalSentAtIso: string }>
+  items: Array<{ recipientEmail: string; originalSentAtIso: string }>,
+  onProgress?: (checked: number, total: number) => void
 ): Promise<Map<string, ManualFollowUpCheck>> {
   const client = buildGraphClient(accessToken);
   const results = new Map<string, ManualFollowUpCheck>();
 
   const CONCURRENCY = 6;
   let cursor = 0;
+  let checked = 0;
 
   async function worker() {
     while (cursor < items.length) {
       const item = items[cursor++];
       const result = await countManualFollowUpsSent(client, item.recipientEmail, item.originalSentAtIso);
       results.set(item.recipientEmail.toLowerCase(), result);
+      checked++;
+      onProgress?.(checked, items.length);
     }
   }
 

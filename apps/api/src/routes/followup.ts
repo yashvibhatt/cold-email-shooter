@@ -148,59 +148,133 @@ followUpRouter.post(
   }
 );
 
+// In-memory per-user job state for the manual sync below. Single-process app,
+// so this is fine — no need for Redis/DB-backed job tracking here.
+interface ManualSyncState {
+  status: 'running' | 'done' | 'error';
+  checked: number;
+  total: number;
+  manualSynced?: number;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+const manualSyncState = new Map<string, ManualSyncState>();
+
+async function runManualSync(userId: string, accessToken: string) {
+  const state: ManualSyncState = { status: 'running', checked: 0, total: 0, startedAt: new Date().toISOString() };
+  manualSyncState.set(userId, state);
+
+  try {
+    const pendingRows = await prisma.followUp.findMany({
+      where: { userId, followedUp: false, status: { not: FollowUpStatus.RESPONDED } },
+    });
+
+    let manualSynced = 0;
+    if (pendingRows.length > 0) {
+      const providerByJobId = new Map(
+        (
+          await prisma.emailJob.findMany({
+            where: { id: { in: pendingRows.map((r) => r.emailJobId) } },
+            select: { id: true, provider: true },
+          })
+        ).map((j) => [j.id, j.provider])
+      );
+
+      const outlookPendingRows = pendingRows.filter(
+        (r) => (providerByJobId.get(r.emailJobId) ?? 'OUTLOOK') === 'OUTLOOK'
+      );
+      state.total = outlookPendingRows.length;
+
+      const manualResults = await detectManualFollowUps(
+        accessToken,
+        outlookPendingRows.map((r) => ({ recipientEmail: r.recipientEmail, originalSentAtIso: r.originalSentAt.toISOString() })),
+        (checked, total) => {
+          state.checked = checked;
+          state.total = total;
+        }
+      );
+
+      for (const row of outlookPendingRows) {
+        const manual = manualResults.get(row.recipientEmail.toLowerCase());
+        if (manual && manual.count > row.followUpCount) {
+          await prisma.followUp.update({
+            where: { id: row.id },
+            data: {
+              followUpCount: manual.count,
+              lastFollowUpSentAt: manual.lastSentAt ? new Date(manual.lastSentAt) : null,
+            },
+          });
+          manualSynced++;
+        }
+      }
+    }
+
+    logger.info('Manual follow-up sync completed', { userId, checked: pendingRows.length, manualSynced });
+    state.status = 'done';
+    state.manualSynced = manualSynced;
+    state.checked = pendingRows.length;
+    state.finishedAt = new Date().toISOString();
+  } catch (err) {
+    logger.error('Manual follow-up sync failed', { userId, error: err instanceof Error ? err.message : String(err) });
+    state.status = 'error';
+    state.error = err instanceof Error ? err.message : 'Unknown error';
+    state.finishedAt = new Date().toISOString();
+  }
+}
+
 // POST /api/followup/sync-manual — checks Sent Items for follow-ups sent by
 // replying directly in Outlook (not through this app). Split out from /scan
 // because it does one Graph search PER pending recipient — with a large
-// pending list this can take minutes, long enough to time out if bundled
-// into the regular scan. Run this on demand instead.
+// pending list this can take several minutes, long enough to time out a
+// single blocking HTTP request. Runs as a background job instead; poll
+// GET /sync-manual/status for progress.
 followUpRouter.post(
   '/sync-manual',
   requireAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { currentUser } = req as AuthedRequest;
-      const accessToken = await getValidAccessToken(currentUser.id);
-
-      const pendingRows = await prisma.followUp.findMany({
-        where: { userId: currentUser.id, followedUp: false, status: { not: FollowUpStatus.RESPONDED } },
-      });
-
-      let manualSynced = 0;
-      if (pendingRows.length > 0) {
-        const providerByJobId = new Map(
-          (
-            await prisma.emailJob.findMany({
-              where: { id: { in: pendingRows.map((r) => r.emailJobId) } },
-              select: { id: true, provider: true },
-            })
-          ).map((j) => [j.id, j.provider])
-        );
-
-        const outlookPendingRows = pendingRows.filter(
-          (r) => (providerByJobId.get(r.emailJobId) ?? 'OUTLOOK') === 'OUTLOOK'
-        );
-
-        const manualResults = await detectManualFollowUps(
-          accessToken,
-          outlookPendingRows.map((r) => ({ recipientEmail: r.recipientEmail, originalSentAtIso: r.originalSentAt.toISOString() }))
-        );
-
-        for (const row of outlookPendingRows) {
-          const manual = manualResults.get(row.recipientEmail.toLowerCase());
-          if (manual && manual.count > row.followUpCount) {
-            await prisma.followUp.update({
-              where: { id: row.id },
-              data: {
-                followUpCount: manual.count,
-                lastFollowUpSentAt: manual.lastSentAt ? new Date(manual.lastSentAt) : null,
-              },
-            });
-            manualSynced++;
-          }
-        }
+      const existing = manualSyncState.get(currentUser.id);
+      if (existing?.status === 'running') {
+        res.json({ success: true, data: { alreadyRunning: true, ...existing } });
+        return;
       }
 
-      logger.info('Manual follow-up sync completed', { userId: currentUser.id, checked: pendingRows.length, manualSynced });
+      const accessToken = await getValidAccessToken(currentUser.id);
+      manualSyncState.set(currentUser.id, {
+        status: 'running',
+        checked: 0,
+        total: 0,
+        startedAt: new Date().toISOString(),
+      });
+      runManualSync(currentUser.id, accessToken);
+
+      res.json({ success: true, data: { started: true } });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/followup/sync-manual/status — poll progress/result of the
+// background job kicked off above.
+followUpRouter.get(
+  '/sync-manual/status',
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { currentUser } = req as AuthedRequest;
+      const state = manualSyncState.get(currentUser.id);
+      if (!state) {
+        res.json({ success: true, data: { status: 'idle' } });
+        return;
+      }
+
+      if (state.status !== 'done') {
+        res.json({ success: true, data: state });
+        return;
+      }
 
       const rawList = await prisma.followUp.findMany({
         where: { userId: currentUser.id },
@@ -208,7 +282,7 @@ followUpRouter.post(
       });
       const list = await withSenderInfo(rawList, currentUser.id);
 
-      res.json({ success: true, data: { manualSynced, checked: pendingRows.length, list } });
+      res.json({ success: true, data: { ...state, list } });
     } catch (err) {
       next(err);
     }

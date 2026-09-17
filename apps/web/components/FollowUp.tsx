@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw, AlertTriangle, CheckCircle2, Circle, Trash2, Loader2,
@@ -432,6 +432,7 @@ export function FollowUp() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [selectDateInput, setSelectDateInput] = useState(localDateString(new Date()));
+  const [dateFilter, setDateFilter] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'daysSilent' | 'followUpCount'>('daysSilent');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -447,12 +448,47 @@ export function FollowUp() {
     },
   });
 
-  const syncManualMutation = useMutation({
-    mutationFn: () => followUpApi.syncManual(),
-    onSuccess: (res) => {
-      queryClient.setQueryData(['followup', 'list'], res.data.list);
-    },
-  });
+  // Manual Outlook sync runs as a background job on the server (it can take
+  // several minutes for a large pending list) — start it, then poll status
+  // instead of holding one long-lived HTTP request open, which was timing
+  // out and surfacing as a JSON parse error in the UI.
+  const [syncStatus, setSyncStatus] = useState<{
+    status: 'idle' | 'running' | 'done' | 'error';
+    checked?: number;
+    total?: number;
+    manualSynced?: number;
+    error?: string;
+  }>({ status: 'idle' });
+  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopSyncPolling = () => {
+    if (syncPollRef.current) {
+      clearInterval(syncPollRef.current);
+      syncPollRef.current = null;
+    }
+  };
+
+  const pollSyncStatus = async () => {
+    const res = await followUpApi.syncManualStatus();
+    const d = res.data;
+    setSyncStatus(d);
+    if (d.status === 'done' || d.status === 'error') {
+      stopSyncPolling();
+      if (d.status === 'done' && d.list) {
+        queryClient.setQueryData(['followup', 'list'], d.list);
+      }
+    }
+  };
+
+  const startSyncManual = async () => {
+    setSyncStatus({ status: 'running', checked: 0, total: 0 });
+    await followUpApi.syncManualStart();
+    stopSyncPolling();
+    syncPollRef.current = setInterval(pollSyncStatus, 3000);
+    pollSyncStatus();
+  };
+
+  useEffect(() => stopSyncPolling, []);
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, followedUp }: { id: string; followedUp: boolean }) => followUpApi.setFollowedUp(id, followedUp),
@@ -471,7 +507,12 @@ export function FollowUp() {
   });
 
   const rows = data ?? [];
-  const activeRows = hideDismissed ? rows.filter((r) => !r.followedUp) : rows;
+  const dismissedFiltered = hideDismissed ? rows.filter((r) => !r.followedUp) : rows;
+  // Scoping to a single campaign date affects everything downstream — the
+  // tab counts, the table, all of it — not just which rows get checkbox-selected.
+  const activeRows = dateFilter
+    ? dismissedFiltered.filter((r) => localDateString(new Date(r.originalSentAt)) === dateFilter)
+    : dismissedFiltered;
 
   const filteredRows = activeRows.filter((r) => {
     if (filter === 'not_followed_up' && !(r.followUpCount === 0 && r.status !== 'RESPONDED')) return false;
@@ -530,10 +571,12 @@ export function FollowUp() {
     });
   };
 
-  // Compares by local calendar date, not UTC — a row sent at 9am NYC should
-  // match the date the user actually picked, not shift a day depending on UTC offset.
+  // Filters the whole view down to one campaign date, then selects everyone
+  // visible in it — compares by local calendar date, not UTC, so a row sent
+  // at 9am NYC matches the date actually picked regardless of UTC offset.
   const selectByDate = (dateStr: string) => {
-    const matching = visibleRows.filter((r) => localDateString(new Date(r.originalSentAt)) === dateStr);
+    setDateFilter(dateStr);
+    const matching = dismissedFiltered.filter((r) => localDateString(new Date(r.originalSentAt)) === dateStr);
     setSelectedIds(new Set(matching.map((r) => r.id)));
   };
 
@@ -562,24 +605,29 @@ export function FollowUp() {
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => syncManualMutation.mutate()}
-            loading={syncManualMutation.isPending}
-            title="Checks Sent Items for follow-ups you sent by replying directly in Outlook. Can take a minute or more with a large list."
+            onClick={startSyncManual}
+            loading={syncStatus.status === 'running'}
+            title="Checks Sent Items for follow-ups you sent by replying directly in Outlook. Can take a few minutes with a large list — runs in the background."
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Sync manual Outlook follow-ups
           </Button>
-          {syncManualMutation.data && (
+          {syncStatus.status === 'running' && (
             <span className="text-xs text-muted">
-              {syncManualMutation.data.data.manualSynced} synced (checked {syncManualMutation.data.data.checked})
+              Checking… {syncStatus.checked ?? 0}/{syncStatus.total ?? '?'}
+            </span>
+          )}
+          {syncStatus.status === 'done' && (
+            <span className="text-xs text-muted">
+              {syncStatus.manualSynced} synced (checked {syncStatus.checked})
             </span>
           )}
         </div>
 
-        {(error || scanMutation.error || syncManualMutation.error) && (
+        {(error || scanMutation.error || syncStatus.status === 'error') && (
           <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-            {((error ?? scanMutation.error ?? syncManualMutation.error) as Error).message}
+            {((error ?? scanMutation.error) as Error)?.message ?? syncStatus.error}
           </div>
         )}
       </div>
@@ -657,18 +705,26 @@ export function FollowUp() {
             </div>
           </div>
 
-          {/* Select by exact date */}
+          {/* Filter + select by exact campaign date */}
           <div className="flex items-center gap-2 bg-surface-3 border border-border rounded-lg px-3 py-2">
-            <span className="text-xs text-muted whitespace-nowrap">Select rows sent on</span>
+            <span className="text-xs text-muted whitespace-nowrap">Show only mail sent on</span>
             <input
               type="date"
               value={selectDateInput}
               onChange={(e) => setSelectDateInput(e.target.value)}
               className="bg-surface border border-border text-slate-200 text-xs px-2 py-1 rounded-md focus:outline-none focus:border-primary"
             />
-            <Button variant="secondary" size="sm" onClick={() => selectByDate(selectDateInput)} disabled={visibleRows.length === 0}>
-              Select
+            <Button variant="secondary" size="sm" onClick={() => selectByDate(selectDateInput)}>
+              Filter &amp; select
             </Button>
+            {dateFilter && (
+              <button
+                onClick={() => { setDateFilter(null); setSelectedIds(new Set()); }}
+                className="text-xs text-amber-400 hover:text-amber-300"
+              >
+                Showing only {dateFilter} — clear
+              </button>
+            )}
             {selectedIds.size > 0 && (
               <button
                 onClick={() => setSelectedIds(new Set())}

@@ -5,6 +5,7 @@ import {
   Upload, CheckCircle2, AlertTriangle, X, Send,
   ChevronDown, ChevronUp, Sparkles, Clock,
   ChevronLeft, ChevronRight, Users, Eye, Link2, Mail,
+  Building2, Pencil, RotateCcw, Globe,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { AttachmentPicker } from '@/components/AttachmentPicker';
@@ -12,6 +13,7 @@ import { useUploadContacts, useScheduleCampaign } from '@/hooks/useEmails';
 import { useGoogleStatus } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import type { ContactRow, ContactsUploadResult, AttachmentInfo, EmailProviderType } from '@/lib/api';
+import { resolveTimezoneFromLocation } from '@/lib/timezone';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -45,6 +47,18 @@ function applyTemplate(template: string, contact: ContactRow): string {
 
 function firstLine(text: string): string {
   return text.split('\n').find((l) => l.trim()) ?? '';
+}
+
+// Groups contacts by company name; contacts with no company go under '__none__'
+const NO_COMPANY_KEY = '__none__';
+
+function companyKeyFor(contact: ContactRow): string {
+  return contact.company?.trim() || NO_COMPANY_KEY;
+}
+
+interface GroupOverride {
+  subject: string;
+  body: string;
 }
 
 // Uses local timezone, not UTC — avoids off-by-one-day bug for US users late at night
@@ -99,17 +113,17 @@ function formatLocal(d: Date): string {
 
 interface PreviewProps {
   contacts: ContactRow[];
-  subject: string;
-  body: string;
+  getTemplateFor: (contact: ContactRow) => { subject: string; body: string };
 }
 
-function PersonalisationPreview({ contacts, subject, body }: PreviewProps) {
+function PersonalisationPreview({ contacts, getTemplateFor }: PreviewProps) {
   const [expanded, setExpanded]     = useState(false);
   const [activeIdx, setActiveIdx]   = useState(0);
 
   const noName = contacts.filter((c) => !c.firstName && !c.fullName);
 
   const active  = contacts[activeIdx];
+  const activeTpl = getTemplateFor(active);
   const prev    = () => setActiveIdx((i) => Math.max(0, i - 1));
   const next    = () => setActiveIdx((i) => Math.min(contacts.length - 1, i + 1));
 
@@ -180,11 +194,11 @@ function PersonalisationPreview({ contacts, subject, body }: PreviewProps) {
           <div className="px-4 py-3 border-t border-border space-y-2 bg-surface/30">
             <div className="text-xs">
               <span className="text-muted font-mono">Subject: </span>
-              <span className="text-slate-200 font-medium">{applyTemplate(subject, active)}</span>
+              <span className="text-slate-200 font-medium">{applyTemplate(activeTpl.subject, active)}</span>
             </div>
             <div className="text-xs text-muted font-mono border-t border-border/50 pt-2">Body</div>
             <pre className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed font-sans">
-              {applyTemplate(body, active)}
+              {applyTemplate(activeTpl.body, active)}
             </pre>
           </div>
 
@@ -201,8 +215,9 @@ function PersonalisationPreview({ contacts, subject, body }: PreviewProps) {
               </thead>
               <tbody>
                 {contacts.map((c, i) => {
-                  const renderedSubject = applyTemplate(subject, c);
-                  const renderedGreeting = firstLine(applyTemplate(body, c));
+                  const tpl = getTemplateFor(c);
+                  const renderedSubject = applyTemplate(tpl.subject, c);
+                  const renderedGreeting = firstLine(applyTemplate(tpl.body, c));
                   const missingName = !c.firstName && !c.fullName;
                   return (
                     <tr
@@ -242,6 +257,174 @@ function PersonalisationPreview({ contacts, subject, body }: PreviewProps) {
   );
 }
 
+// ─── TemplateEditor ────────────────────────────────────────────────────────────
+// Self-contained subject/body editor with variable chips + link-insertion, reused
+// for both the global email template and each per-company override below.
+
+interface TemplateEditorProps {
+  subject: string;
+  body: string;
+  onSubjectChange: (v: string) => void;
+  onBodyChange: (v: string) => void;
+  subjectLabel?: string;
+  bodyLabel?: string;
+  subjectPlaceholder?: string;
+  bodyPlaceholder?: string;
+  bodyRows?: number;
+}
+
+function TemplateEditor({
+  subject, body, onSubjectChange, onBodyChange,
+  subjectLabel = 'Subject line', bodyLabel = 'Email body',
+  subjectPlaceholder, bodyPlaceholder, bodyRows = 9,
+}: TemplateEditorProps) {
+  const subjectRef   = useRef<HTMLInputElement>(null);
+  const bodyRef      = useRef<HTMLTextAreaElement>(null);
+  const lastFocusRef = useRef<'subject' | 'body'>('body');
+
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl,  setLinkUrl]  = useState('');
+  const bodySelectionRef = useRef<{ start: number; end: number } | null>(null);
+
+  const insertVar = (v: string) => {
+    if (lastFocusRef.current === 'subject') {
+      const el    = subjectRef.current;
+      const start = el?.selectionStart ?? subject.length;
+      const end   = el?.selectionEnd   ?? subject.length;
+      onSubjectChange(subject.slice(0, start) + v + subject.slice(end));
+      requestAnimationFrame(() => {
+        el?.focus();
+        el?.setSelectionRange(start + v.length, start + v.length);
+      });
+    } else {
+      const el    = bodyRef.current;
+      const start = el?.selectionStart ?? body.length;
+      const end   = el?.selectionEnd   ?? body.length;
+      onBodyChange(body.slice(0, start) + v + body.slice(end));
+      requestAnimationFrame(() => {
+        el?.focus();
+        el?.setSelectionRange(start + v.length, start + v.length);
+      });
+    }
+  };
+
+  const openLinkPopover = () => {
+    const el = bodyRef.current;
+    bodySelectionRef.current = {
+      start: el?.selectionStart ?? body.length,
+      end:   el?.selectionEnd   ?? body.length,
+    };
+    setLinkUrl('');
+    setLinkOpen(true);
+  };
+
+  const insertLinkButton = () => {
+    let url = linkUrl.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+
+    const html = `<a href="${url}" target="_blank">Click Here</a>`;
+    const { start, end } = bodySelectionRef.current ?? { start: body.length, end: body.length };
+    const nextBody = body.slice(0, start) + html + body.slice(end);
+    onBodyChange(nextBody);
+    setLinkOpen(false);
+    setLinkUrl('');
+
+    requestAnimationFrame(() => {
+      const el = bodyRef.current;
+      el?.focus();
+      el?.setSelectionRange(start + html.length, start + html.length);
+    });
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Variable chips */}
+      <div className="flex flex-wrap gap-1.5">
+        {VARIABLE_HINTS.map((v) => (
+          <button
+            key={v.var}
+            type="button"
+            onClick={() => insertVar(v.var)}
+            title={`Insert ${v.var} · e.g. "${v.example}"`}
+            className="flex items-center gap-1 text-xs bg-primary/10 text-blue-400 border border-primary/20 px-2 py-0.5 rounded-full hover:bg-primary/20 active:scale-95 transition-all font-mono"
+          >
+            <Sparkles className="w-2.5 h-2.5" />
+            {v.var}
+            <span className="text-primary/60 font-sans">→ {v.example}</span>
+          </button>
+        ))}
+
+        <button
+          type="button"
+          onClick={openLinkPopover}
+          title="Insert a hyperlink into the email body"
+          className="flex items-center gap-1 text-xs bg-primary/10 text-blue-400 border border-primary/20 px-2 py-0.5 rounded-full hover:bg-primary/20 active:scale-95 transition-all font-mono"
+        >
+          <Link2 className="w-2.5 h-2.5" />
+          Insert link
+        </button>
+      </div>
+
+      {/* Link URL popover */}
+      {linkOpen && (
+        <div className="flex items-center gap-2 bg-surface-3 border border-border rounded-lg px-3 py-2">
+          <Link2 className="w-3.5 h-3.5 text-muted flex-shrink-0" />
+          <input
+            autoFocus
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); insertLinkButton(); }
+              if (e.key === 'Escape') setLinkOpen(false);
+            }}
+            placeholder="Paste link (e.g. https://docsend.com/view/...)"
+            className="flex-1 bg-transparent text-sm text-slate-200 focus:outline-none placeholder:text-muted"
+          />
+          <button
+            type="button"
+            onClick={insertLinkButton}
+            disabled={!linkUrl.trim()}
+            className="text-xs font-medium bg-primary text-white px-2.5 py-1 rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Insert
+          </button>
+          <button type="button" onClick={() => setLinkOpen(false)}>
+            <X className="w-3.5 h-3.5 text-muted hover:text-slate-200" />
+          </button>
+        </div>
+      )}
+
+      {/* Subject */}
+      <div className="space-y-1">
+        <label className="text-xs text-muted font-mono">{subjectLabel}</label>
+        <input
+          ref={subjectRef}
+          value={subject}
+          onFocus={() => { lastFocusRef.current = 'subject'; }}
+          onChange={(e) => onSubjectChange(e.target.value)}
+          className="w-full bg-surface-3 border border-border text-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:border-primary"
+          placeholder={subjectPlaceholder}
+        />
+      </div>
+
+      {/* Body */}
+      <div className="space-y-1">
+        <label className="text-xs text-muted font-mono">{bodyLabel}</label>
+        <textarea
+          ref={bodyRef}
+          value={body}
+          onFocus={() => { lastFocusRef.current = 'body'; }}
+          onChange={(e) => onBodyChange(e.target.value)}
+          rows={bodyRows}
+          className="w-full bg-surface-3 border border-border text-slate-300 text-sm px-3 py-2 rounded-lg focus:outline-none focus:border-primary resize-y leading-relaxed"
+          placeholder={bodyPlaceholder}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function CampaignUpload() {
@@ -270,15 +453,17 @@ Best regards`
   const [staggerMinutes, setStaggerMinutes] = useState(5);
   const [provider,       setProvider]       = useState<EmailProviderType>('OUTLOOK');
 
+  const [groupByCompany, setGroupByCompany] = useState(false);
+  const [groupOverrides, setGroupOverrides] = useState<Record<string, GroupOverride>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+  const [localTzMode,    setLocalTzMode]    = useState(false);
+  const [localSendTime,  setLocalSendTime]  = useState('09:00');
+  const [myTimezone,     setMyTimezone]     = useState('America/New_York');
+
   const { data: googleStatus } = useGoogleStatus();
 
   const fileInputRef   = useRef<HTMLInputElement>(null);
-  const subjectRef     = useRef<HTMLInputElement>(null);
-  const bodyRef        = useRef<HTMLTextAreaElement>(null);
-
-  const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
-  const [linkUrl,         setLinkUrl]         = useState('');
-  const bodySelectionRef  = useRef<{ start: number; end: number } | null>(null);
 
   const uploadMutation   = useUploadContacts();
   const campaignMutation = useScheduleCampaign();
@@ -305,65 +490,109 @@ Best regards`
     if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   };
 
-  // Insert variable at cursor position in whichever field is focused
-  const insertVar = (v: string) => {
-    const active = document.activeElement;
-    if (active === subjectRef.current) {
-      const el    = subjectRef.current!;
-      const start = el.selectionStart ?? el.value.length;
-      const end   = el.selectionEnd   ?? el.value.length;
-      setSubject(el.value.slice(0, start) + v + el.value.slice(end));
-      requestAnimationFrame(() => {
-        el.focus();
-        el.setSelectionRange(start + v.length, start + v.length);
-      });
-    } else {
-      const el    = bodyRef.current!;
-      const start = el?.selectionStart ?? el?.value.length ?? body.length;
-      const end   = el?.selectionEnd   ?? el?.value.length ?? body.length;
-      setBody(body.slice(0, start) + v + body.slice(end));
-      requestAnimationFrame(() => {
-        el?.focus();
-        el?.setSelectionRange(start + v.length, start + v.length);
-      });
+  // Unique companies present in the uploaded contacts, with counts — used for the
+  // "customize by company" section. Contacts with no company fall under NO_COMPANY_KEY.
+  const companyGroups = (() => {
+    if (!uploadResult) return [];
+    const counts = new Map<string, { label: string; count: number }>();
+    for (const c of uploadResult.contacts) {
+      const key = companyKeyFor(c);
+      const label = key === NO_COMPANY_KEY ? 'No company listed' : c.company.trim();
+      const existing = counts.get(key);
+      if (existing) existing.count++;
+      else counts.set(key, { label, count: 1 });
     }
+    return Array.from(counts.entries())
+      .map(([key, v]) => ({ key, ...v }))
+      .sort((a, b) => b.count - a.count);
+  })();
+
+  // Resolved IANA timezone per contact, from their CSV location (city/state/country) —
+  // falls back to the global `timezone` dropdown when the location can't be matched.
+  const contactTimezone = (contact: ContactRow): { tz: string; resolved: boolean } => {
+    const resolved = resolveTimezoneFromLocation(contact.location);
+    return resolved ? { tz: resolved, resolved: true } : { tz: timezone, resolved: false };
   };
 
-  const openLinkPopover = () => {
-    const el = bodyRef.current;
-    bodySelectionRef.current = {
-      start: el?.selectionStart ?? el?.value.length ?? body.length,
-      end:   el?.selectionEnd   ?? el?.value.length ?? body.length,
-    };
-    setLinkUrl('');
-    setLinkPopoverOpen(true);
+  const timezoneSummary = (() => {
+    if (!uploadResult || !localTzMode) return null;
+    const counts = new Map<string, number>();
+    let unresolved = 0;
+    for (const c of uploadResult.contacts) {
+      const { tz, resolved } = contactTimezone(c);
+      counts.set(tz, (counts.get(tz) ?? 0) + 1);
+      if (!resolved) unresolved++;
+    }
+
+    const groups = Array.from(counts.entries())
+      .map(([tz, count]) => {
+        const sendUtc = computeUtc(startDate, localSendTime, tz);
+        const inMyTz = sendUtc
+          ? sendUtc.toLocaleString('en-US', {
+              timeZone: myTimezone, hour: 'numeric', minute: '2-digit', hour12: true,
+            })
+          : null;
+        const theirDay = sendUtc
+          ? sendUtc.toLocaleDateString('en-US', { timeZone: tz, month: 'short', day: 'numeric' })
+          : null;
+        const myDay = sendUtc
+          ? sendUtc.toLocaleDateString('en-US', { timeZone: myTimezone, month: 'short', day: 'numeric' })
+          : null;
+        return { tz, count, sendUtc, inMyTz, dayShift: theirDay && myDay && theirDay !== myDay ? myDay : null };
+      })
+      .sort((a, b) => b.count - a.count);
+
+    return { groups, unresolved };
+  })();
+
+  const getTemplateFor = (contact: ContactRow): { subject: string; body: string } => {
+    if (groupByCompany) {
+      const override = groupOverrides[companyKeyFor(contact)];
+      if (override) return { subject: override.subject, body: override.body };
+    }
+    return { subject, body };
   };
 
-  const insertLinkButton = () => {
-    let url = linkUrl.trim();
-    if (!url) return;
-    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  const startCustomizing = (key: string) => {
+    setGroupOverrides((prev) => ({
+      ...prev,
+      [key]: prev[key] ?? { subject, body },
+    }));
+    setExpandedGroups((prev) => ({ ...prev, [key]: true }));
+  };
 
-    const html = `<a href="${url}" target="_blank">Click Here</a>`;
-
-    const { start, end } = bodySelectionRef.current ?? { start: body.length, end: body.length };
-    const nextBody = body.slice(0, start) + html + body.slice(end);
-    setBody(nextBody);
-    setLinkPopoverOpen(false);
-    setLinkUrl('');
-
-    requestAnimationFrame(() => {
-      const el = bodyRef.current;
-      el?.focus();
-      el?.setSelectionRange(start + html.length, start + html.length);
+  const resetGroup = (key: string) => {
+    setGroupOverrides((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
     });
   };
 
   const handleSchedule = async () => {
     if (!uploadResult) return;
     try {
+      const contactsPayload = uploadResult.contacts.map((c, i) => {
+        let next = c;
+
+        if (groupByCompany) {
+          const override = groupOverrides[companyKeyFor(c)];
+          if (override) next = { ...next, subjectOverride: override.subject, bodyOverride: override.body };
+        }
+
+        if (localTzMode) {
+          const { tz } = contactTimezone(c);
+          const localUtc = computeUtc(startDate, localSendTime, tz);
+          if (localUtc) {
+            const staggered = new Date(localUtc.getTime() + i * staggerMinutes * 60_000);
+            next = { ...next, scheduledAtOverride: staggered.toISOString(), timezoneOverride: tz };
+          }
+        }
+
+        return next;
+      });
       const res = await campaignMutation.mutateAsync({
-        contacts:      uploadResult.contacts,
+        contacts:      contactsPayload,
         subject,
         body,
         startDate,
@@ -506,96 +735,21 @@ Best regards`
           <span className="text-xs text-muted ml-auto">Click a chip to insert at cursor</span>
         </div>
 
-        {/* Variable chips */}
-        <div className="flex flex-wrap gap-1.5">
-          {VARIABLE_HINTS.map((v) => (
-            <button
-              key={v.var}
-              type="button"
-              onClick={() => insertVar(v.var)}
-              title={`Insert ${v.var} · e.g. "${v.example}"`}
-              className="flex items-center gap-1 text-xs bg-primary/10 text-blue-400 border border-primary/20 px-2 py-0.5 rounded-full hover:bg-primary/20 active:scale-95 transition-all font-mono"
-            >
-              <Sparkles className="w-2.5 h-2.5" />
-              {v.var}
-              <span className="text-primary/60 font-sans">→ {v.example}</span>
-            </button>
-          ))}
-
-          <button
-            type="button"
-            onClick={openLinkPopover}
-            title="Insert a &quot;Click Here&quot; link button into the email body"
-            className="flex items-center gap-1 text-xs bg-primary/10 text-blue-400 border border-primary/20 px-2 py-0.5 rounded-full hover:bg-primary/20 active:scale-95 transition-all font-mono"
-          >
-            <Link2 className="w-2.5 h-2.5" />
-            Link button
-          </button>
-        </div>
-
-        {/* Link URL popover */}
-        {linkPopoverOpen && (
-          <div className="flex items-center gap-2 bg-surface-3 border border-border rounded-lg px-3 py-2">
-            <Link2 className="w-3.5 h-3.5 text-muted flex-shrink-0" />
-            <input
-              autoFocus
-              value={linkUrl}
-              onChange={(e) => setLinkUrl(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); insertLinkButton(); }
-                if (e.key === 'Escape') setLinkPopoverOpen(false);
-              }}
-              placeholder="Paste link (e.g. https://docsend.com/view/...)"
-              className="flex-1 bg-transparent text-sm text-slate-200 focus:outline-none placeholder:text-muted"
-            />
-            <button
-              type="button"
-              onClick={insertLinkButton}
-              disabled={!linkUrl.trim()}
-              className="text-xs font-medium bg-primary text-white px-2.5 py-1 rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Insert
-            </button>
-            <button type="button" onClick={() => setLinkPopoverOpen(false)}>
-              <X className="w-3.5 h-3.5 text-muted hover:text-slate-200" />
-            </button>
-          </div>
-        )}
+        <TemplateEditor
+          subject={subject}
+          body={body}
+          onSubjectChange={setSubject}
+          onBodyChange={setBody}
+          subjectPlaceholder="Hi {{first_name}}, quick question about {{company}}"
+          bodyPlaceholder="Write your email here…"
+        />
 
         <div className="space-y-3">
-          {/* Subject */}
-          <div className="space-y-1">
-            <label className="text-xs text-muted font-mono">Subject line</label>
-            <input
-              id="campaign-subject"
-              ref={subjectRef}
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              className="w-full bg-surface-3 border border-border text-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:border-primary"
-              placeholder="Hi {{first_name}}, quick question about {{company}}"
-            />
-          </div>
-
-          {/* Body */}
-          <div className="space-y-1">
-            <label className="text-xs text-muted font-mono">Email body</label>
-            <textarea
-              id="campaign-body"
-              ref={bodyRef}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={9}
-              className="w-full bg-surface-3 border border-border text-slate-300 text-sm px-3 py-2 rounded-lg focus:outline-none focus:border-primary resize-y leading-relaxed"
-              placeholder="Write your email here…"
-            />
-          </div>
-
           {/* ── Personalisation preview ── */}
           {uploadResult && uploadResult.contacts.length > 0 && (
             <PersonalisationPreview
               contacts={uploadResult.contacts}
-              subject={subject}
-              body={body}
+              getTemplateFor={getTemplateFor}
             />
           )}
 
@@ -603,6 +757,101 @@ Best regards`
           <AttachmentPicker attachments={attachments} onChange={setAttachments} />
         </div>
       </div>
+
+      {/* ── Step 2b: Customize by company ── */}
+      {uploadResult && companyGroups.length > 0 && (
+        <div className="gradient-border p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={groupByCompany}
+                onChange={(e) => setGroupByCompany(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-primary"
+              />
+              <Building2 className="w-3.5 h-3.5 text-primary" />
+              <span className="text-sm font-medium text-slate-200">Customize by company</span>
+            </label>
+            <span className="text-xs text-muted ml-auto">
+              {companyGroups.length} compan{companyGroups.length === 1 ? 'y' : 'ies'} detected
+              {Object.keys(groupOverrides).length > 0 && ` · ${Object.keys(groupOverrides).length} customized`}
+            </span>
+          </div>
+
+          {groupByCompany && (
+            <div className="space-y-2 animate-in">
+              <p className="text-xs text-muted">
+                Give specific companies a custom subject/body. Anyone whose company you don't
+                customize keeps the default email from Step 2. Variables like {'{{first_name}}'} still work.
+              </p>
+              {companyGroups.map((g) => {
+                const isCustom   = !!groupOverrides[g.key];
+                const isExpanded = !!expandedGroups[g.key];
+                const override   = groupOverrides[g.key];
+
+                return (
+                  <div key={g.key} className="rounded-lg border border-border overflow-hidden">
+                    <div className="w-full flex items-center justify-between px-3 py-2 bg-surface-2/50">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedGroups((p) => ({ ...p, [g.key]: !p[g.key] }))}
+                        className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                      >
+                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-muted flex-shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-muted flex-shrink-0" />}
+                        <span className={cn('text-sm font-medium truncate', g.key === NO_COMPANY_KEY ? 'text-amber-400' : 'text-slate-200')}>
+                          {g.label}
+                        </span>
+                        <span className="text-xs text-subtle font-mono flex-shrink-0">
+                          {g.count} contact{g.count === 1 ? '' : 's'}
+                        </span>
+                        {isCustom && (
+                          <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded-full flex-shrink-0">
+                            <Pencil className="w-2.5 h-2.5" /> customized
+                          </span>
+                        )}
+                      </button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {isCustom ? (
+                          <button
+                            type="button"
+                            onClick={() => resetGroup(g.key)}
+                            title="Reset to default email"
+                            className="flex items-center gap-1 text-xs text-muted hover:text-slate-200 px-2 py-1 rounded-md transition-colors"
+                          >
+                            <RotateCcw className="w-3 h-3" /> Reset
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => startCustomizing(g.key)}
+                            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded-md transition-colors"
+                          >
+                            <Pencil className="w-3 h-3" /> Customize
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {isExpanded && isCustom && override && (
+                      <div className="p-3 border-t border-border bg-surface/30">
+                        <TemplateEditor
+                          subject={override.subject}
+                          body={override.body}
+                          onSubjectChange={(v) => setGroupOverrides((p) => ({ ...p, [g.key]: { ...p[g.key], subject: v } }))}
+                          onBodyChange={(v) => setGroupOverrides((p) => ({ ...p, [g.key]: { ...p[g.key], body: v } }))}
+                          subjectLabel={`Subject for ${g.label}`}
+                          bodyLabel={`Body for ${g.label}`}
+                          bodyRows={7}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Step 3: Schedule ── */}
       <div className={cn('gradient-border p-5 space-y-4 transition-opacity', !uploadResult && 'opacity-40 pointer-events-none')}>
@@ -644,6 +893,21 @@ Best regards`
           </div>
         </div>
 
+        {/* Send at each contact's local time */}
+        {uploadResult && (
+          <label className="flex items-center gap-2 cursor-pointer select-none p-3 rounded-lg border border-border bg-surface-2/40">
+            <input
+              type="checkbox"
+              checked={localTzMode}
+              onChange={(e) => setLocalTzMode(e.target.checked)}
+              className="w-3.5 h-3.5 rounded accent-primary"
+            />
+            <Globe className="w-3.5 h-3.5 text-primary" />
+            <span className="text-sm font-medium text-slate-200">Send at each contact's local time</span>
+            <span className="text-xs text-muted">using the location in your CSV, instead of one fixed timezone</span>
+          </label>
+        )}
+
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="space-y-1">
             <label className="text-xs text-muted font-mono">Start date</label>
@@ -655,16 +919,17 @@ Best regards`
             />
           </div>
           <div className="space-y-1">
-            <label className="text-xs text-muted font-mono">Start time</label>
+            <label className="text-xs text-muted font-mono">{localTzMode ? 'Local send time' : 'Start time'}</label>
             <input
               type="time"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
+              value={localTzMode ? localSendTime : startTime}
+              onChange={(e) => (localTzMode ? setLocalSendTime(e.target.value) : setStartTime(e.target.value))}
               className="w-full bg-surface-3 border border-border text-slate-300 text-sm px-3 py-2 rounded-lg focus:outline-none focus:border-primary"
             />
+            {localTzMode && <p className="text-xs text-subtle">e.g. 09:00 = 9am in each contact's own timezone</p>}
           </div>
           <div className="space-y-1">
-            <label className="text-xs text-muted font-mono">Timezone</label>
+            <label className="text-xs text-muted font-mono">{localTzMode ? 'Fallback timezone' : 'Timezone'}</label>
             <select
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
@@ -672,6 +937,7 @@ Best regards`
             >
               {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
             </select>
+            {localTzMode && <p className="text-xs text-subtle">Used when a contact's location can't be matched</p>}
           </div>
           <div className="space-y-1">
             <label className="text-xs text-muted font-mono">Stagger (mins)</label>
@@ -687,8 +953,50 @@ Best regards`
           </div>
         </div>
 
+        {/* Per-timezone breakdown, shown only in local-time mode */}
+        {timezoneSummary && (
+          <div className="rounded-lg border border-border overflow-hidden">
+            <div className="px-3 py-2 bg-surface-2/50 flex items-center gap-2 flex-wrap">
+              <Globe className="w-3.5 h-3.5 text-primary" />
+              <span className="text-xs font-medium text-slate-300">Resolved timezones</span>
+              <span className="text-xs text-muted font-mono">· {timezoneSummary.groups.length} timezone{timezoneSummary.groups.length === 1 ? '' : 's'}</span>
+              {timezoneSummary.unresolved > 0 && (
+                <span className="flex items-center gap-1 text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full">
+                  <AlertTriangle className="w-3 h-3" />
+                  {timezoneSummary.unresolved} using fallback timezone ({timezone})
+                </span>
+              )}
+              <div className="flex items-center gap-1.5 ml-auto">
+                <span className="text-xs text-muted">Your timezone</span>
+                <select
+                  value={myTimezone}
+                  onChange={(e) => setMyTimezone(e.target.value)}
+                  className="bg-surface-3 border border-border text-slate-300 text-xs px-2 py-1 rounded-md focus:outline-none focus:border-primary"
+                >
+                  {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="divide-y divide-border/40 bg-surface/30">
+              {timezoneSummary.groups.map((g) => (
+                <div key={g.tz} className="px-3 py-2 flex items-center justify-between gap-3 flex-wrap text-xs">
+                  <span className="font-mono text-slate-300">
+                    {g.tz} <span className="text-muted">· {g.count} contact{g.count === 1 ? '' : 's'}</span>
+                  </span>
+                  {g.inMyTz && (
+                    <span className="text-muted">
+                      {localSendTime} their time → <span className="text-slate-200 font-medium">{g.inMyTz}</span> your time
+                      {g.dayShift && <span className="text-amber-400 ml-1">({g.dayShift})</span>}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Schedule summary + warnings */}
-        {(() => {
+        {!localTzMode && (() => {
           const firstUtc = computeUtc(startDate, startTime, timezone);
           if (!firstUtc) return null;
 

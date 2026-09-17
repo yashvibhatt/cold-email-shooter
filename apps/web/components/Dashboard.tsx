@@ -24,7 +24,7 @@ function useTokenStatus() {
       const res = await fetch('/api/auth/token-status', { credentials: 'include' });
       if (!res.ok) return null;
       const data = await res.json();
-      return data.data as { valid: boolean; expiresInMinutes: number; hasMsalCache: boolean; needsRelogin: boolean };
+      return data.data as { valid: boolean; expiresInMinutes: number; hasMsalCache: boolean; needsRelogin: boolean; noOutlookAccount?: boolean };
     },
     refetchInterval: 5 * 60 * 1000, // check every 5 minutes
     retry: false,
@@ -43,7 +43,7 @@ export default function Dashboard() {
   const [showTest, setShowTest] = useState(false);
 
   const isSafeMode = process.env.NEXT_PUBLIC_SAFE_MODE !== 'false';
-  const needsRelogin = tokenStatus?.needsRelogin || (tokenStatus?.valid === false);
+  const needsRelogin = !tokenStatus?.noOutlookAccount && (tokenStatus?.needsRelogin || tokenStatus?.valid === false);
 
   return (
     <div className="min-h-screen bg-canvas dot-grid">

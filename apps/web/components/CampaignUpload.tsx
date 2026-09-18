@@ -59,6 +59,7 @@ function companyKeyFor(contact: ContactRow): string {
 interface GroupOverride {
   subject: string;
   body: string;
+  attachments: AttachmentInfo[];
 }
 
 // Uses local timezone, not UTC — avoids off-by-one-day bug for US users late at night
@@ -566,7 +567,7 @@ Best regards`
   const startCustomizing = (key: string) => {
     setGroupOverrides((prev) => ({
       ...prev,
-      [key]: prev[key] ?? { subject, body },
+      [key]: prev[key] ?? { subject, body, attachments },
     }));
     setExpandedGroups((prev) => ({ ...prev, [key]: true }));
   };
@@ -587,7 +588,14 @@ Best regards`
 
         if (groupByCompany) {
           const override = groupOverrides[companyKeyFor(c)];
-          if (override) next = { ...next, subjectOverride: override.subject, bodyOverride: override.body };
+          if (override) {
+            next = {
+              ...next,
+              subjectOverride: override.subject,
+              bodyOverride: override.body,
+              attachmentIdsOverride: override.attachments.map((a) => a.id),
+            };
+          }
         }
 
         if (localTzMode) {
@@ -843,7 +851,7 @@ Best regards`
                     </div>
 
                     {isExpanded && isCustom && override && (
-                      <div className="p-3 border-t border-border bg-surface/30">
+                      <div className="p-3 border-t border-border bg-surface/30 space-y-3">
                         <TemplateEditor
                           subject={override.subject}
                           body={override.body}
@@ -852,6 +860,11 @@ Best regards`
                           subjectLabel={`Subject for ${g.label}`}
                           bodyLabel={`Body for ${g.label}`}
                           bodyRows={7}
+                        />
+                        <AttachmentPicker
+                          attachments={override.attachments}
+                          onChange={(atts) => setGroupOverrides((p) => ({ ...p, [g.key]: { ...p[g.key], attachments: atts } }))}
+                          hardDeleteOnRemove={false}
                         />
                       </div>
                     )}

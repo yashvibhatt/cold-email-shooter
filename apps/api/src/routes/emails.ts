@@ -257,7 +257,7 @@ emailsRouter.post(
         attachmentIds = [],
         provider = 'OUTLOOK',
       } = req.body as {
-        contacts: Array<{ email: string; firstName: string; lastName: string; fullName: string; company: string; title: string; location?: string; subjectOverride?: string; bodyOverride?: string; scheduledAtOverride?: string; timezoneOverride?: string }>;
+        contacts: Array<{ email: string; firstName: string; lastName: string; fullName: string; company: string; title: string; location?: string; subjectOverride?: string; bodyOverride?: string; scheduledAtOverride?: string; timezoneOverride?: string; attachmentIdsOverride?: string[] }>;
         subject: string;
         body: string;
         startDate: string;
@@ -324,6 +324,7 @@ emailsRouter.post(
             scheduledDatetime = new Date(baseUtc.getTime() + i * staggerMinutes * 60 * 1000);
           }
           const jobTimezone = contact.timezoneOverride || timezone;
+          const jobAttachmentIds = contact.attachmentIdsOverride ?? attachmentIds;
           const subjectTemplate = contact.subjectOverride?.trim() || subject;
           const bodyTemplate    = contact.bodyOverride?.trim()    || body;
           const expandedSubject = applyTemplate(subjectTemplate, contact);
@@ -356,7 +357,7 @@ emailsRouter.post(
               company: contact.company || null,
               location: contact.location || null,
               sourceFileId: sourceFileId ?? null,
-              attachmentIds,
+              attachmentIds: jobAttachmentIds,
               idempotencyKey,
             },
           });

@@ -11,6 +11,12 @@ interface Props {
   onChange: (attachments: AttachmentInfo[]) => void;
   maxFiles?: number;
   maxMB?: number;
+  // When this list can share attachment IDs with another list on the same page
+  // (e.g. a per-company override that starts as a copy of the global attachments),
+  // removing one here must NOT hard-delete it from the server — that would silently
+  // break every other list still referencing the same ID. Set to false in that case;
+  // it just detaches from this list instead.
+  hardDeleteOnRemove?: boolean;
 }
 
 function fileIcon(mimeType: string) {
@@ -34,6 +40,7 @@ export function AttachmentPicker({
   onChange,
   maxFiles = 5,
   maxMB = 4,
+  hardDeleteOnRemove = true,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadMutation = useUploadAttachments();
@@ -58,6 +65,12 @@ export function AttachmentPicker({
   };
 
   const remove = async (att: AttachmentInfo) => {
+    if (!hardDeleteOnRemove) {
+      // Just detach from this list — the file may still be referenced elsewhere
+      // (e.g. the global attachments list, or another company's override).
+      onChange(attachments.filter((a) => a.id !== att.id));
+      return;
+    }
     try {
       await deleteMutation.mutateAsync(att.id);
       onChange(attachments.filter((a) => a.id !== att.id));

@@ -364,6 +364,7 @@ export interface ContactRow {
   bodyOverride?: string;
   scheduledAtOverride?: string;
   timezoneOverride?: string;
+  attachmentIdsOverride?: string[];
 }
 
 export interface ContactsUploadResult {

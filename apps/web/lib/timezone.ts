@@ -183,3 +183,28 @@ export function resolveTimezoneFromLocation(location: string): string | null {
   const state   = parts.length >= 2 ? parts[parts.length - 2] : '';
   return resolveTimezone(state, country) ?? resolveTimezone('', country) ?? resolveTimezone(state, '');
 }
+
+// Gets the UTC offset in ms for a given instant in a given IANA timezone
+function getTimezoneOffsetMs(date: Date, tz: string): number {
+  try {
+    const utcStr = date.toLocaleString('en-US', { timeZone: 'UTC' });
+    const tzStr  = date.toLocaleString('en-US', { timeZone: tz });
+    return new Date(utcStr).getTime() - new Date(tzStr).getTime();
+  } catch {
+    return 0;
+  }
+}
+
+// Computes the UTC instant for a local date + time string in a given IANA timezone.
+// Returns null if the inputs can't be parsed.
+export function computeUtc(date: string, time: string, tz: string): Date | null {
+  if (!date || !time) return null;
+  try {
+    const localStr = `${date}T${time}:00`;
+    const fakeUtc   = new Date(localStr + 'Z'); // treat as UTC first
+    const tzOffset  = getTimezoneOffsetMs(fakeUtc, tz);
+    return new Date(fakeUtc.getTime() + tzOffset);
+  } catch {
+    return null;
+  }
+}

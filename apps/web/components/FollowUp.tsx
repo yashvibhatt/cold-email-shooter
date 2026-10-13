@@ -4,12 +4,20 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw, AlertTriangle, CheckCircle2, Circle, Trash2, Loader2,
-  Clock, PlaneTakeoff, Download, Reply, X, Send, Users, Sparkles, MessageCircleReply, CalendarClock,
+  Clock, PlaneTakeoff, Download, Reply, X, Send, Users, Sparkles, MessageCircleReply, CalendarClock, Globe,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { followUpApi } from '@/lib/api';
 import type { FollowUpRow, BulkFollowUpSendResponse } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { resolveTimezoneFromLocation, computeUtc } from '@/lib/timezone';
+
+const TIMEZONES = [
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+  'America/Toronto', 'Europe/London', 'Europe/Paris', 'Europe/Berlin',
+  'Asia/Dubai', 'Asia/Kolkata', 'Asia/Tokyo', 'Asia/Singapore',
+  'Australia/Sydney', 'UTC',
+];
 
 const SCAN_WINDOW_DAYS = 14;
 
@@ -266,8 +274,11 @@ function BulkSendModal({ rows, onClose, onDone }: BulkSendModalProps) {
   const [message, setMessage] = useState(BULK_DEFAULT_MESSAGE);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BulkFollowUpSendResponse | null>(null);
-  const [when, setWhen] = useState<'now' | 'later'>('now');
+  const [when, setWhen] = useState<'now' | 'later' | 'local'>('now');
   const [scheduleValue, setScheduleValue] = useState(defaultScheduleValue());
+  const [localDate, setLocalDate] = useState(localDateString(new Date(Date.now() + 24 * 60 * 60 * 1000)));
+  const [localTime, setLocalTime] = useState('09:00');
+  const [fallbackTz, setFallbackTz] = useState('America/New_York');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const insertVar = (variable: string) => {
@@ -282,8 +293,36 @@ function BulkSendModal({ rows, onClose, onDone }: BulkSendModalProps) {
     });
   };
 
+  // Resolved IANA timezone per row, from their original campaign's location — falls
+  // back to the chosen fallback timezone when the location can't be matched.
+  const rowTimezone = (row: FollowUpRow): { tz: string; resolved: boolean } => {
+    const resolved = row.location ? resolveTimezoneFromLocation(row.location) : null;
+    return resolved ? { tz: resolved, resolved: true } : { tz: fallbackTz, resolved: false };
+  };
+
+  const timezoneSummary = (() => {
+    if (when !== 'local') return null;
+    const counts = new Map<string, number>();
+    let unresolved = 0;
+    for (const r of rows) {
+      const { tz, resolved } = rowTimezone(r);
+      counts.set(tz, (counts.get(tz) ?? 0) + 1);
+      if (!resolved) unresolved++;
+    }
+    return { groups: Array.from(counts.entries()).sort((a, b) => b[1] - a[1]), unresolved };
+  })();
+
   const sendMutation = useMutation({
     mutationFn: () => {
+      if (when === 'local') {
+        const scheduledAtById: Record<string, string> = {};
+        for (const r of rows) {
+          const { tz } = rowTimezone(r);
+          const utc = computeUtc(localDate, localTime, tz);
+          if (utc) scheduledAtById[r.id] = utc.toISOString();
+        }
+        return followUpApi.bulkSend(rows.map((r) => r.id), message, undefined, scheduledAtById);
+      }
       const scheduledAt = when === 'later' ? new Date(scheduleValue).toISOString() : undefined;
       return followUpApi.bulkSend(rows.map((r) => r.id), message, scheduledAt);
     },
@@ -360,7 +399,99 @@ function BulkSendModal({ rows, onClose, onDone }: BulkSendModalProps) {
                 ))}
               </div>
 
-              <SendTimingPicker when={when} setWhen={setWhen} scheduleValue={scheduleValue} setScheduleValue={setScheduleValue} />
+              <div className="space-y-2">
+                <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border w-fit">
+                  <button
+                    type="button"
+                    onClick={() => setWhen('now')}
+                    className={cn('px-3 py-1 rounded-md text-xs font-medium transition-all',
+                      when === 'now' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300')}
+                  >
+                    Send now
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWhen('later')}
+                    className={cn('flex items-center gap-1 px-3 py-1 rounded-md text-xs font-medium transition-all',
+                      when === 'later' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300')}
+                  >
+                    <CalendarClock className="w-3 h-3" />
+                    Schedule for later
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWhen('local')}
+                    className={cn('flex items-center gap-1 px-3 py-1 rounded-md text-xs font-medium transition-all',
+                      when === 'local' ? 'bg-surface-3 text-slate-200 border border-border-2' : 'text-muted hover:text-slate-300')}
+                  >
+                    <Globe className="w-3 h-3" />
+                    Each contact's local time
+                  </button>
+                </div>
+
+                {when === 'later' && (
+                  <input
+                    type="datetime-local"
+                    value={scheduleValue}
+                    onChange={(e) => setScheduleValue(e.target.value)}
+                    className="bg-surface-3 border border-border text-slate-200 text-sm px-3 py-1.5 rounded-lg focus:outline-none focus:border-primary"
+                  />
+                )}
+
+                {when === 'local' && (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="date"
+                        value={localDate}
+                        onChange={(e) => setLocalDate(e.target.value)}
+                        className="bg-surface-3 border border-border text-slate-200 text-sm px-3 py-1.5 rounded-lg focus:outline-none focus:border-primary"
+                      />
+                      <input
+                        type="time"
+                        value={localTime}
+                        onChange={(e) => setLocalTime(e.target.value)}
+                        className="bg-surface-3 border border-border text-slate-200 text-sm px-3 py-1.5 rounded-lg focus:outline-none focus:border-primary"
+                      />
+                      <span className="text-xs text-muted">Fallback tz</span>
+                      <select
+                        value={fallbackTz}
+                        onChange={(e) => setFallbackTz(e.target.value)}
+                        className="bg-surface-3 border border-border text-slate-300 text-xs px-2 py-1.5 rounded-lg focus:outline-none focus:border-primary"
+                      >
+                        {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                      </select>
+                    </div>
+                    <p className="text-xs text-subtle">
+                      Each recipient's send time is computed from the location on their original campaign.
+                      Anyone whose location can't be resolved uses the fallback timezone above.
+                    </p>
+                    {timezoneSummary && (
+                      <div className="rounded-lg border border-border overflow-hidden">
+                        <div className="px-3 py-1.5 bg-surface-2/50 flex items-center gap-2 flex-wrap">
+                          <Globe className="w-3 h-3 text-primary" />
+                          <span className="text-xs text-muted">
+                            {timezoneSummary.groups.length} timezone{timezoneSummary.groups.length === 1 ? '' : 's'}
+                          </span>
+                          {timezoneSummary.unresolved > 0 && (
+                            <span className="flex items-center gap-1 text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full ml-auto">
+                              <AlertTriangle className="w-3 h-3" />
+                              {timezoneSummary.unresolved} using fallback ({fallbackTz})
+                            </span>
+                          )}
+                        </div>
+                        <div className="p-2 flex flex-wrap gap-1.5 bg-surface/30">
+                          {timezoneSummary.groups.map(([tz, count]) => (
+                            <span key={tz} className="text-xs bg-surface-3 border border-border text-slate-300 px-2 py-0.5 rounded-md font-mono">
+                              {tz} <span className="text-muted">· {count}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
@@ -383,8 +514,8 @@ function BulkSendModal({ rows, onClose, onDone }: BulkSendModalProps) {
                   loading={sendMutation.isPending}
                   disabled={!message.trim() || isPastSchedule}
                 >
-                  {when === 'later' ? <CalendarClock className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-                  {when === 'later' ? `Schedule ${rows.length}` : `Send to ${rows.length}`}
+                  {when === 'now' ? <Send className="w-3.5 h-3.5" /> : <CalendarClock className="w-3.5 h-3.5" />}
+                  {when === 'now' ? `Send to ${rows.length}` : `Schedule ${rows.length}`}
                 </Button>
               </div>
             </>

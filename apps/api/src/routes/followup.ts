@@ -430,12 +430,24 @@ followUpRouter.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { currentUser } = req as AuthedRequest;
-      const { ids, message, scheduledAt } = req.body as { ids?: string[]; message?: string; scheduledAt?: string };
+      const { ids, message, scheduledAt, scheduledAtById } = req.body as {
+        ids?: string[];
+        message?: string;
+        scheduledAt?: string;
+        // Optional per-recipient override (e.g. "each contact's local 9am") — takes
+        // precedence over the uniform `scheduledAt` for any id present in the map.
+        scheduledAtById?: Record<string, string>;
+      };
 
       if (!Array.isArray(ids) || ids.length === 0) throw new ValidationError('ids (non-empty array) is required');
       if (ids.length > 200) throw new ValidationError('Maximum 200 follow-ups per bulk send');
       if (!message?.trim()) throw new ValidationError('message is required');
       if (scheduledAt && isNaN(Date.parse(scheduledAt))) throw new ValidationError('scheduledAt must be a valid ISO date');
+      if (scheduledAtById) {
+        for (const v of Object.values(scheduledAtById)) {
+          if (isNaN(Date.parse(v))) throw new ValidationError('scheduledAtById values must be valid ISO dates');
+        }
+      }
       const followUpMessage: string = message;
 
       const requestedFollowUps = await prisma.followUp.findMany({
@@ -455,7 +467,8 @@ followUpRouter.post(
       const jobById = new Map(emailJobs.map((j) => [j.id, j]));
 
       const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
-      const isFutureSchedule = scheduledDate && scheduledDate.getTime() > Date.now() + 5000;
+      const isFutureSchedule =
+        !!scheduledAtById || (scheduledDate && scheduledDate.getTime() > Date.now() + 5000);
 
       if (isFutureSchedule) {
         const results: Array<{ id: string; recipientEmail: string; success: boolean; error?: string }> = [...skippedResponded];
@@ -464,6 +477,11 @@ followUpRouter.post(
           const emailJob = jobById.get(followUp.emailJobId);
           if (!emailJob) {
             results.push({ id: followUp.id, recipientEmail: followUp.recipientEmail, success: false, error: 'Original email job not found' });
+            continue;
+          }
+          const perItemDate = scheduledAtById?.[followUp.id] ? new Date(scheduledAtById[followUp.id]) : scheduledDate;
+          if (!perItemDate) {
+            results.push({ id: followUp.id, recipientEmail: followUp.recipientEmail, success: false, error: 'No scheduled time provided' });
             continue;
           }
           await scheduleFollowUpSend(
@@ -476,13 +494,17 @@ followUpRouter.post(
               originalSentAtIso: followUp.originalSentAt.toISOString(),
               message: followUpMessage,
             },
-            scheduledDate!
+            perItemDate
           );
           results.push({ id: followUp.id, recipientEmail: followUp.recipientEmail, success: true });
         }
 
         const scheduledCount = results.filter((r) => r.success).length;
-        logger.info('Bulk follow-up scheduled', { userId: currentUser.id, scheduledCount, scheduledAt: scheduledDate!.toISOString() });
+        logger.info('Bulk follow-up scheduled', {
+          userId: currentUser.id,
+          scheduledCount,
+          mode: scheduledAtById ? 'per-recipient-local-time' : 'uniform',
+        });
 
         res.json({ success: true, data: { scheduled: true, sent: 0, failed: results.length - scheduledCount, scheduledCount, results } });
         return;

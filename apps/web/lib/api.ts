@@ -198,8 +198,8 @@ export const followUpApi = {
   remove: (id: string) => request<{ message: string }>(`/followup/${id}`, { method: 'DELETE' }),
   send: (id: string, message: string, scheduledAt?: string) =>
     request<FollowUpSendResult>(`/followup/${id}/send`, { method: 'POST', body: JSON.stringify({ message, scheduledAt }) }),
-  bulkSend: (ids: string[], message: string, scheduledAt?: string) =>
-    request<BulkFollowUpSendResponse>('/followup/bulk-send', { method: 'POST', body: JSON.stringify({ ids, message, scheduledAt }) }),
+  bulkSend: (ids: string[], message: string, scheduledAt?: string, scheduledAtById?: Record<string, string>) =>
+    request<BulkFollowUpSendResponse>('/followup/bulk-send', { method: 'POST', body: JSON.stringify({ ids, message, scheduledAt, scheduledAtById }) }),
 };
 
 // ─── Sent Log ───────────────────────────────────────────────────────────────────

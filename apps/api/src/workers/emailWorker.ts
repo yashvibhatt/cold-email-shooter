@@ -44,18 +44,12 @@ async function processEmailJob(job: Job<EmailJobData>): Promise<void> {
     return;
   }
 
-  // If the scheduled time was more than 30 minutes ago, the server was probably
-  // down for a long time and sending now would surprise the user.
+  // If the scheduled time has passed (e.g. the server was down), send immediately
+  // instead of failing it — just log how late it ended up going out.
   const overdueMs = Date.now() - new Date(emailJob.scheduledDatetime).getTime();
   if (overdueMs > 30 * 60 * 1000) {
     const minutesLate = Math.round(overdueMs / 60000);
-    const reason = `Scheduled time expired — would have sent ${minutesLate} min late after server recovery`;
-    await prisma.emailJob.update({
-      where: { id: emailJobId },
-      data: { status: EmailStatus.FAILED, failedReason: reason },
-    });
-    logger.warn('Email job expired — skipping late send', { emailJobId, minutesLate });
-    return;
+    logger.warn('Email job is overdue — sending immediately instead of failing', { emailJobId, minutesLate });
   }
 
   try {

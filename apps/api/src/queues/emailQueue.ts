@@ -44,6 +44,14 @@ export async function scheduleEmailJob(
   const now = Date.now();
   const delay = Math.max(0, scheduledAt.getTime() - now);
 
+  // BullMQ dedupes by jobId — if a job with this ID already ran (e.g. this is a
+  // retry), add() would silently no-op and return the old finished job instead
+  // of actually re-queuing it. Clear out any stale job under this ID first.
+  const existing = await emailQueue.getJob(emailJobId);
+  if (existing) {
+    await existing.remove().catch(() => {});
+  }
+
   await emailQueue.add(
     'send-email',
     { emailJobId, userId },

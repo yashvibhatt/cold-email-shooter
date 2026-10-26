@@ -461,12 +461,16 @@ emailsRouter.post(
         throw new AppError('Only failed emails can be retried', 422, 'NOT_FAILED');
       }
 
+      // Reset scheduledDatetime to now too — otherwise a job that failed because it was
+      // more than 30 min past its original schedule (see emailWorker's late-send guard)
+      // would immediately fail the exact same way again on retry.
+      const retryAt = new Date();
       await prisma.emailJob.update({
         where: { id: req.params.id },
-        data: { status: EmailStatus.SCHEDULED, failedReason: null },
+        data: { status: EmailStatus.SCHEDULED, failedReason: null, scheduledDatetime: retryAt },
       });
 
-      await scheduleEmailJob(emailJob.id, currentUser.id, new Date());
+      await scheduleEmailJob(emailJob.id, currentUser.id, retryAt);
 
       res.json({ success: true, data: { message: 'Email queued for retry' } });
     } catch (err) {
